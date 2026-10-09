@@ -23,6 +23,7 @@ pub mod try_command;
 pub mod use_command;
 pub mod workspace_state;
 
+pub(crate) mod compile;
 pub(crate) mod crate_metadata;
 pub(crate) mod dir_walk;
 pub(crate) mod init;

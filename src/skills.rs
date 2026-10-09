@@ -71,7 +71,7 @@ impl Skill {
 // only a string — not a structured origin — is carried to the sync layer.
 
 /// 8-hex-char prefix of SHA-256 over the JSON-serialized origin key.
-fn hash_origin_key<T: serde::Serialize>(key: &T) -> String {
+pub(crate) fn hash_origin_key<T: serde::Serialize>(key: &T) -> String {
     use sha2::{Digest, Sha256};
     let bytes = serde_json::to_vec(key).expect("origin key always serializes");
     let digest = Sha256::digest(&bytes);
@@ -102,6 +102,7 @@ pub struct SkillWithGroupContext {
     /// and dedup at sync time.
     pub origin_hash: String,
     pub agent_plugin_root: Option<PathBuf>,
+    pub plugin_index: usize,
 }
 
 /// Resolve all applicable skills from the registry.
@@ -157,7 +158,7 @@ pub(crate) async fn collect_skills(
     update: UpdateLevel,
 ) -> Vec<SkillWithGroupContext> {
     let mut results = Vec::new();
-    for parsed in active {
+    for (plugin_index, parsed) in active.iter().enumerate() {
         ctx.set_workspace_member(parsed.workspace_member);
         for group in &parsed.manifest.skills {
             let skills = load_skills_for_group(sym, parsed, group, ctx, update).await;
@@ -166,6 +167,7 @@ pub(crate) async fn collect_skills(
                     skill,
                     origin_hash,
                     parsed.agent_plugin_root.as_deref(),
+                    plugin_index,
                     &parsed.manifest.name,
                     ctx,
                     &mut results,
@@ -581,6 +583,7 @@ fn collect_skill_applicable_to(
     skill: Skill,
     origin_hash: String,
     agent_plugin_root: Option<&Path>,
+    plugin_index: usize,
     plugin_name: &str,
     ctx: &mut PredicateContext,
     results: &mut Vec<SkillWithGroupContext>,
@@ -609,6 +612,7 @@ fn collect_skill_applicable_to(
         skill,
         origin_hash,
         agent_plugin_root: agent_plugin_root.map(Path::to_path_buf),
+        plugin_index,
     });
 }
 

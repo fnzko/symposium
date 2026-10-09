@@ -224,7 +224,7 @@ fn copy_contents(source: &Path, dest: &Path) -> Result<()> {
         let from = entry.path();
         let to = dest.join(&file_name);
         if from.is_dir() {
-            crate::sync::copy_dir_recursive(&from, &to, None)?;
+            crate::sync::copy_dir_recursive(&from, &to, None, &mut Default::default())?;
         } else {
             fs::copy(&from, &to).with_context(|| format!("copy {}", from.display()))?;
         }

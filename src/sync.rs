@@ -452,7 +452,11 @@ async fn resolve_custom_predicate_entries(
 
 /// Run the full sync: discover applicable skills, install into agent dirs,
 /// clean up stale installations.
-pub async fn sync(sym: &Symposium, deps: &Arc<WorkspaceDeps>, update: UpdateLevel) -> Result<()> {
+pub async fn sync(
+    sym: &Symposium,
+    deps: &Arc<WorkspaceDeps>,
+    update: UpdateLevel,
+) -> Result<Vec<(Agent, Vec<String>)>> {
     if let Some(error) = sym.config_error() {
         anyhow::bail!(
             "not syncing: {} could not be read; fix or remove it, then run the command again\n{error}",
@@ -580,13 +584,18 @@ pub async fn sync(sym: &Symposium, deps: &Arc<WorkspaceDeps>, update: UpdateLeve
     let compiled = compile::compile(&plugins_root, &global, debounce, &mut warned, skip_cleanup);
 
     let mut delivered = BTreeSet::new();
+    let mut plugin_changes = Vec::new();
     let mut copied: std::collections::BTreeMap<_, BTreeSet<_>> = std::collections::BTreeMap::new();
     for agent_name in &agent_names {
         let agent = Agent::from_config_name(agent_name)?;
-        let takes_plugins = agent.deliver_user_plugins(sym, &compiled.plugins);
-        if takes_plugins {
-            delivered.insert(agent_name);
-        }
+        let takes_plugins = match agent.deliver_user_plugins(sym, &compiled.plugins) {
+            Some(changed) => {
+                delivered.insert(agent_name);
+                plugin_changes.push((agent, changed));
+                true
+            }
+            None => false,
+        };
         let dir = copied
             .entry(skills_parent_dir(agent, &project_root))
             .or_default();
@@ -833,7 +842,7 @@ pub async fn sync(sym: &Symposium, deps: &Arc<WorkspaceDeps>, update: UpdateLeve
         );
     }
 
-    Ok(())
+    Ok(plugin_changes)
 }
 
 fn lock(dir: &Path) -> Result<fs::File> {

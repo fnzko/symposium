@@ -30,6 +30,8 @@ use std::sync::Arc;
 pub(crate) const MARKER_FILE: &str = ".symposium";
 const PLUGIN_DATA_DIR: &str = "plugin-data";
 
+const SYNC_LOCK_FILE: &str = "sync.lock";
+
 /// Create `path` and any missing ancestors up to `boundary`.
 ///
 /// `boundary` is the workspace root — we never walk above it.
@@ -457,6 +459,7 @@ pub async fn sync(sym: &Symposium, deps: &Arc<WorkspaceDeps>, update: UpdateLeve
             display_path(&sym.config_dir().join("config.toml")),
         );
     }
+    let _lock = lock(sym.config_dir())?;
     let out = &Output::quiet();
     let loaded = deps
         .load()
@@ -831,6 +834,20 @@ pub async fn sync(sym: &Symposium, deps: &Arc<WorkspaceDeps>, update: UpdateLeve
     }
 
     Ok(())
+}
+
+fn lock(dir: &Path) -> Result<fs::File> {
+    fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+    let path = dir.join(SYNC_LOCK_FILE);
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&path)
+        .with_context(|| format!("open {}", path.display()))?;
+    file.lock()
+        .with_context(|| format!("lock {}", path.display()))?;
+    Ok(file)
 }
 
 pub(crate) fn unregister_user_plugins(sym: &Symposium) {

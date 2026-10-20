@@ -642,6 +642,104 @@ async fn removing_agent_removes_hooks() {
     .unwrap();
 }
 
+#[tokio::test]
+async fn removing_an_agent_reaps_its_skills_in_the_workspace() {
+    with_fixture(
+        TestMode::SimulationOnly,
+        &["plugins0", "workspace0"],
+        async |mut ctx| {
+            ctx.symposium(&["init", "--add-agent", "claude", "--add-agent", "codex"])
+                .await?;
+            ctx.symposium(&["sync"]).await?;
+            let root = ctx.workspace_root.clone().unwrap();
+            let claude_skills = root.join(".claude/skills");
+            let codex_skills = root.join(".agents/skills");
+            assert!(!find_installed_skills(&claude_skills, "serde-guidance").is_empty());
+            assert!(!find_installed_skills(&codex_skills, "serde-guidance").is_empty());
+
+            ctx.symposium(&["init", "--remove-agent", "claude"]).await?;
+            assert!(find_installed_skills(&claude_skills, "serde-guidance").is_empty());
+            assert!(!find_installed_skills(&codex_skills, "serde-guidance").is_empty());
+
+            ctx.symposium(&["init", "--remove-agent", "codex"]).await?;
+            assert!(find_installed_skills(&codex_skills, "serde-guidance").is_empty());
+            Ok(())
+        },
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn sync_without_agents_still_reaps_stale_skills() {
+    with_fixture(
+        TestMode::SimulationOnly,
+        &["plugins0", "workspace0"],
+        async |mut ctx| {
+            ctx.symposium(&["init", "--add-agent", "claude"]).await?;
+            ctx.symposium(&["init", "--remove-agent", "claude"]).await?;
+
+            let stale = ctx
+                .workspace_root
+                .as_ref()
+                .unwrap()
+                .join(".claude/skills/left-behind");
+            std::fs::create_dir_all(&stale)?;
+            std::fs::write(stale.join("SKILL.md"), "old")?;
+            std::fs::write(stale.join(".symposium"), "")?;
+
+            ctx.symposium(&["sync"]).await?;
+            assert!(!stale.exists());
+            Ok(())
+        },
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn sync_keeps_skills_and_hooks_while_the_config_cannot_be_read() {
+    with_fixture(
+        TestMode::SimulationOnly,
+        &["plugins0", "workspace0"],
+        async |mut ctx| {
+            ctx.symposium(&["init", "--add-agent", "claude", "--hook-scope", "global"])
+                .await?;
+            ctx.symposium(&["sync"]).await?;
+            let skills = ctx.workspace_root.clone().unwrap().join(".claude/skills");
+            let settings = ctx.sym.home_dir().join(".claude/settings.json");
+            assert!(!find_installed_skills(&skills, "serde-guidance").is_empty());
+            assert!(std::fs::read_to_string(&settings)?.contains("cargo-agents hook"));
+
+            let recommendations = symposium_install::git::GitCacheManager::new(
+                &ctx.sym.install_context(),
+                symposium::config::REGISTRY_CACHE_SUBDIR,
+            )
+            .cache_path_for_url("https://github.com/symposium-dev/recommendations")
+            .unwrap();
+            std::fs::create_dir_all(&recommendations)?;
+
+            let config_dir = ctx.sym.config_dir().to_path_buf();
+            let config = config_dir.join("config.toml");
+            let contents = std::fs::read_to_string(&config)?;
+            std::fs::write(&config, "[[[")?;
+            ctx.sym = symposium::config::Symposium::from_dir(&config_dir);
+            assert!(ctx.symposium(&["sync"]).await.is_err());
+            assert!(!find_installed_skills(&skills, "serde-guidance").is_empty());
+            assert!(std::fs::read_to_string(&settings)?.contains("cargo-agents hook"));
+
+            std::fs::write(&config, contents)?;
+            ctx.sym = symposium::config::Symposium::from_dir(&config_dir);
+            ctx.symposium(&["init", "--remove-agent", "claude"]).await?;
+            assert!(find_installed_skills(&skills, "serde-guidance").is_empty());
+            assert!(!std::fs::read_to_string(&settings)?.contains("cargo-agents hook"));
+            Ok(())
+        },
+    )
+    .await
+    .unwrap();
+}
+
 /// `--add-agent` is additive to existing agents.
 #[tokio::test]
 async fn add_agent_is_additive() {

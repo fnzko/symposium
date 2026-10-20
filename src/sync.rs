@@ -340,6 +340,12 @@ async fn resolve_custom_predicate_entries(
 /// Run the full sync: discover applicable skills, install into agent dirs,
 /// clean up stale installations.
 pub async fn sync(sym: &Symposium, deps: &Arc<WorkspaceDeps>, update: UpdateLevel) -> Result<()> {
+    if let Some(error) = sym.config_error() {
+        anyhow::bail!(
+            "not syncing: {} could not be read; fix or remove it, then run the command again\n{error}",
+            display_path(&sym.config_dir().join("config.toml")),
+        );
+    }
     let out = &Output::quiet();
     let loaded = deps
         .load()
@@ -444,7 +450,6 @@ pub async fn sync(sym: &Symposium, deps: &Arc<WorkspaceDeps>, update: UpdateLeve
                 message: "no agents configured, run `cargo agents init` to add one".into(),
             },
         );
-        return Ok(());
     }
 
     // Track every skill directory we (re)install during this sync. Anything

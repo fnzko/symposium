@@ -675,6 +675,10 @@ impl Symposium {
         })
     }
 
+    pub fn config_error(&self) -> Option<&str> {
+        self.config_error.as_deref()
+    }
+
     /// Write the user config to disk.
     pub fn save_config(&self) -> anyhow::Result<()> {
         let path = self.dirs.config_dir.join("config.toml");

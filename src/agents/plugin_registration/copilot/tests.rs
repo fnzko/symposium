@@ -11,6 +11,7 @@ fn compiled(names: &[&str]) -> Vec<CompiledPlugin> {
         .iter()
         .map(|name| CompiledPlugin {
             name: name.to_string(),
+            version: "0.0.0".into(),
             dir: Path::new(ROOT).join(name),
         })
         .collect()

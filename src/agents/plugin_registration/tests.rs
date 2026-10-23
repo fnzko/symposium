@@ -9,6 +9,7 @@ fn compiled(staging: &Path, name: &str) -> CompiledPlugin {
     write(&dir.join(crate::sync::MARKER_FILE), "");
     CompiledPlugin {
         name: name.into(),
+        version: "0.0.0".into(),
         dir,
     }
 }

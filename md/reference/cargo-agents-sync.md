@@ -35,7 +35,7 @@ A plugin you enabled with [`cargo agents use --global`](./cargo-agents-use.md) i
 | Agent | Where the plugin goes |
 |-------|-----------------------|
 | Claude Code | `~/.claude/skills/<plugin>/` (or `$CLAUDE_CONFIG_DIR/skills/<plugin>/`) |
-| Codex CLI | `~/.codex/plugins/cache/symposium/<plugin>/0.0.0/` (or under `$CODEX_HOME`), registered and enabled in `config.toml` |
+| Codex CLI | `~/.codex/plugins/cache/symposium/<plugin>/<version>/` (or under `$CODEX_HOME`), registered and enabled in `config.toml` |
 | GitHub Copilot | registered in `~/.copilot/settings.json` (or `$COPILOT_HOME/settings.json`) and loaded from `~/.symposium/installed/<plugin>/` |
 | Antigravity CLI | `~/.gemini/config/plugins/<plugin>/` |
 | Goose | `~/.agents/plugins/<plugin>/` (or `$GOOSE_PATH_ROOT/.agents/plugins/<plugin>/`) |

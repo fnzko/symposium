@@ -15,7 +15,7 @@ use crate::report::ReportEvent;
 use crate::skills::SkillWithGroupContext;
 use crate::sync::{self, TreeContents};
 
-pub(crate) const PLUGIN_VERSION: &str = "0.0.0";
+const PLUGIN_VERSION: &str = "0.0.0";
 const AGENT_PLUGINS_SCHEMA: &str = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
 const MANIFEST_FILE: &str = "plugin.json";
 const CLAUDE_MANIFEST_DIR: &str = ".claude-plugin";
@@ -35,6 +35,8 @@ pub(crate) fn is_plugin_dir(dir: &Path) -> bool {
 
 pub(crate) struct GlobalPlugin {
     name: String,
+    version: Option<String>,
+    description: Option<String>,
     skills: Vec<SkillWithGroupContext>,
 }
 
@@ -67,6 +69,8 @@ fn group_skills(plugins: Vec<Plugin>, skills: Vec<SkillWithGroupContext>) -> Vec
         .into_iter()
         .map(|plugin| GlobalPlugin {
             name: plugin.manifest.name,
+            version: plugin.manifest.version,
+            description: plugin.manifest.description,
             skills: Vec::new(),
         })
         .collect();
@@ -103,12 +107,14 @@ pub(crate) fn compile(
             continue;
         };
         let dir = root.join(&name);
-        match write_plugin(&dir, &name, &skill_dirs(plugin), debounce, warned) {
+        let version = folder_version(&name, plugin.version.as_deref());
+        let manifest = manifest(&name, &version, plugin.description.as_deref());
+        match write_plugin(&dir, &manifest, &skill_dirs(plugin), debounce, warned) {
             Ok(()) => {
                 compiled
                     .skill_origins
                     .extend(plugin.skills.iter().map(|skill| skill.origin_hash.clone()));
-                compiled.plugins.push(CompiledPlugin { name, dir });
+                compiled.plugins.push(CompiledPlugin { name, version, dir });
             }
             Err(e) => warn(format!("failed to compile plugin {name}: {e:#}")),
         }
@@ -134,9 +140,31 @@ fn staged_plugins(root: &Path, compiled: &[CompiledPlugin]) -> Vec<CompiledPlugi
         .filter(|dir| compiled.iter().all(|plugin| &plugin.dir != dir))
         .filter_map(|dir| {
             let name = dir.file_name()?.to_str()?.to_string();
-            Some(CompiledPlugin { name, dir })
+            let version = staged_version(&dir);
+            Some(CompiledPlugin { name, version, dir })
         })
         .collect()
+}
+
+fn staged_version(dir: &Path) -> String {
+    fs::read(dir.join(MANIFEST_FILE))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|manifest| manifest["version"].as_str().map(str::to_string))
+        .unwrap_or_else(|| PLUGIN_VERSION.to_string())
+}
+
+fn folder_version(name: &str, declared: Option<&str>) -> String {
+    match declared {
+        Some(version) if crate::skills::is_safe_dir_name(version) => version.to_string(),
+        Some(version) => {
+            warn(format!(
+                "plugin {name} declares version {version:?}, which cannot name a folder; using {PLUGIN_VERSION}"
+            ));
+            PLUGIN_VERSION.to_string()
+        }
+        None => PLUGIN_VERSION.to_string(),
+    }
 }
 
 /// Stricter than Agent Plugins names: Antigravity rejects `.`.
@@ -206,7 +234,7 @@ fn skill_dirs(plugin: &GlobalPlugin) -> Vec<(String, &SkillWithGroupContext)> {
 
 fn write_plugin(
     dir: &Path,
-    name: &str,
+    manifest: &serde_json::Value,
     skills: &[(String, &SkillWithGroupContext)],
     debounce: Duration,
     warned: &mut BTreeSet<String>,
@@ -214,7 +242,7 @@ fn write_plugin(
     if sync::recently_synced(dir, debounce) {
         return Ok(());
     }
-    let (contents, skipped) = plugin_contents(name, skills)?;
+    let (contents, skipped) = plugin_contents(manifest, skills)?;
     if sync::sync_tree(dir, &contents)? {
         sync::report_skipped(skipped, warned);
     }
@@ -222,10 +250,10 @@ fn write_plugin(
 }
 
 fn plugin_contents(
-    name: &str,
+    manifest: &serde_json::Value,
     skills: &[(String, &SkillWithGroupContext)],
 ) -> Result<(TreeContents, Vec<String>)> {
-    let manifest = serde_json::to_vec_pretty(&manifest(name))?;
+    let manifest = serde_json::to_vec_pretty(manifest)?;
     let mut contents: TreeContents = vec![
         (PathBuf::from(MANIFEST_FILE), Some(manifest.clone())),
         (PathBuf::from(CLAUDE_MANIFEST_DIR), None),
@@ -243,7 +271,7 @@ fn plugin_contents(
             .parent()
             .with_context(|| format!("skill {dir} has no source directory"))?;
         let base = Path::new(SKILLS_DIR).join(dir);
-        let (tree, skips) = sync::collect_dir_contents(source, None)?;
+        let (tree, skips) = sync::collect_dir_contents(source, skill.agent_plugin_root.as_deref())?;
         contents.push((base.clone(), None));
         contents.extend(tree.into_iter().map(|(rel, data)| (base.join(rel), data)));
         skipped.extend(skips);
@@ -252,12 +280,16 @@ fn plugin_contents(
     Ok((contents, skipped))
 }
 
-fn manifest(name: &str) -> serde_json::Value {
-    json!({
+fn manifest(name: &str, version: &str, description: Option<&str>) -> serde_json::Value {
+    let mut manifest = json!({
         "$schema": AGENT_PLUGINS_SCHEMA,
         "name": name,
-        "version": PLUGIN_VERSION,
-    })
+        "version": version,
+    });
+    if let Some(description) = description {
+        manifest["description"] = json!(description);
+    }
+    manifest
 }
 
 fn warn(message: String) {

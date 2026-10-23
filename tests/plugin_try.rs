@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use symposium_testlib::{TestContext, TestMode, with_fixture};
 
-const SKILL_DIRS: [&str; 2] = [".claude/skills", ".agents/skills"];
+const SKILL_DIRS: [&str; 2] = [".kiro/skills", ".opencode/skills"];
 
 async fn init(ctx: &mut TestContext) -> anyhow::Result<()> {
     ctx.symposium(&[
@@ -16,6 +16,14 @@ async fn init(ctx: &mut TestContext) -> anyhow::Result<()> {
         "codex",
         "--add-agent",
         "copilot",
+        "--add-agent",
+        "kiro",
+        "--add-agent",
+        "opencode",
+        "--add-agent",
+        "antigravity",
+        "--add-agent",
+        "goose",
     ])
     .await?;
     ctx.symposium(&["sync"]).await?;
@@ -44,6 +52,22 @@ fn installed_anywhere(workspace: &Path, skill: &str) -> bool {
     SKILL_DIRS
         .iter()
         .any(|dir| workspace.join(dir).join(skill).exists())
+}
+
+fn delivered_anywhere(ctx: &TestContext, plugin: &str) -> bool {
+    let home = ctx.sym.home_dir();
+    let copilot_settings =
+        std::fs::read_to_string(home.join(".copilot/settings.json")).unwrap_or_default();
+    [
+        ctx.sym.config_dir().join("installed"),
+        home.join(".claude/skills"),
+        home.join(".codex/plugins/cache/symposium"),
+        home.join(".gemini/config/plugins"),
+        home.join(".agents/plugins"),
+    ]
+    .iter()
+    .any(|dir| dir.join(plugin).exists())
+        || copilot_settings.contains(plugin)
 }
 
 fn config(ctx: &TestContext) -> String {
@@ -108,6 +132,9 @@ async fn try_installs_a_dormant_plugin_in_every_agent() {
                 config(&ctx)
             );
             assert!(installed_in_every_agent(&workspace(&ctx), "kit-guidance"));
+            assert!(delivered_anywhere(&ctx, "dormant-kit"));
+            let claude_plugin = ctx.sym.home_dir().join(".claude/skills/dormant-kit");
+            assert!(claude_plugin.join("skills/kit-guidance/SKILL.md").is_file());
             Ok(())
         },
     )
@@ -176,6 +203,7 @@ async fn try_leaves_a_gated_plugin_to_its_gate() {
             assert!(user_plugins(&ctx).join("gated-kit").is_dir());
             assert!(!config(&ctx).contains("gated-kit"), "{}", config(&ctx));
             assert!(!installed_anywhere(&workspace(&ctx), "gated-guidance"));
+            assert!(!delivered_anywhere(&ctx, "gated-kit"));
             Ok(())
         },
     )

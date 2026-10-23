@@ -68,7 +68,7 @@ fn deliver(
     let mut updated = Vec::new();
     for plugin in plugins {
         let dest = cache.join(&plugin.name);
-        match copy(&plugin.dir, &dest, debounce) {
+        match copy(&plugin.dir, &dest, &plugin.version, debounce) {
             Ok(changed) => {
                 if changed {
                     tracing::info!(
@@ -112,11 +112,11 @@ fn is_ours(entry: &Item, source: &str) -> bool {
         && entry.get("source").and_then(Item::as_str) == Some(source)
 }
 
-fn copy(source: &Path, dest: &Path, debounce: Duration) -> Result<bool> {
+fn copy(source: &Path, dest: &Path, version: &str, debounce: Duration) -> Result<bool> {
     if sync::recently_synced(dest, debounce) {
         return Ok(false);
     }
-    let version = Path::new(crate::compile::PLUGIN_VERSION);
+    let version = Path::new(version);
     let (contents, _) = sync::collect_dir_contents(source, None)?;
     let mut tree = vec![(version.to_path_buf(), None)];
     tree.extend(

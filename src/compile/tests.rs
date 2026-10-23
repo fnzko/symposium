@@ -53,6 +53,8 @@ fn skill(name: &str, origin: &str, skill_md: &Path, plugin_index: usize) -> Skil
 fn plugin(name: &str, skills: Vec<SkillWithGroupContext>) -> GlobalPlugin {
     GlobalPlugin {
         name: name.into(),
+        version: None,
+        description: None,
         skills,
     }
 }
@@ -258,6 +260,7 @@ fn compile_writes_one_self_contained_directory_per_plugin() {
         compiled.plugins,
         vec![CompiledPlugin {
             name: "guide-tools".into(),
+            version: "0.0.0".into(),
             dir: root.join("guide-tools"),
         }]
     );
@@ -386,5 +389,49 @@ fn manifests_follow_the_agent_plugins_schema() {
           "name": "pdf-tools",
           "version": "0.0.0"
         }"#]]
-    .assert_eq(&serde_json::to_string_pretty(&manifest("pdf-tools")).unwrap());
+    .assert_eq(&serde_json::to_string_pretty(&manifest("pdf-tools", "0.0.0", None)).unwrap());
+}
+
+#[test]
+fn a_package_version_and_description_reach_the_manifest() {
+    assert_eq!(folder_version("kit", Some("1.2.0")), "1.2.0");
+    assert_eq!(folder_version("kit", Some("../up")), PLUGIN_VERSION);
+    assert_eq!(folder_version("kit", None), PLUGIN_VERSION);
+    let rendered = manifest("kit", "1.2.0", Some("A kit"));
+    assert_eq!(rendered["version"], "1.2.0");
+    assert_eq!(rendered["description"], "A kit");
+    assert!(
+        manifest("kit", PLUGIN_VERSION, None)
+            .get("description")
+            .is_none()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_leaving_the_package_stays_out_of_the_compiled_copy() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tmp_root = tmp.path().canonicalize().unwrap();
+    let package = tmp_root.join("package");
+    let skill_md = write_skill(&package.join("skills/linked"), "linked");
+    fs::write(tmp_root.join("outside.md"), "outside").unwrap();
+    std::os::unix::fs::symlink(
+        "../../../outside.md",
+        package.join("skills/linked/outside.md"),
+    )
+    .unwrap();
+    let mut linked = skill("linked", "aaaaaaaa", &skill_md, 0);
+    linked.agent_plugin_root = Some(package);
+    let root = tmp_root.join("installed");
+
+    compile(
+        &root,
+        &[plugin("links", vec![linked])],
+        Duration::ZERO,
+        &mut BTreeSet::new(),
+        false,
+    );
+
+    assert!(root.join("links/skills/linked/SKILL.md").is_file());
+    assert!(!root.join("links/skills/linked/outside.md").exists());
 }

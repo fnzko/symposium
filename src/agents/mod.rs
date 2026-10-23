@@ -22,6 +22,7 @@ use crate::output::{Output, display_path};
 #[derive(Debug, PartialEq)]
 pub(crate) struct CompiledPlugin {
     pub name: String,
+    pub version: String,
     pub dir: PathBuf,
 }
 

@@ -478,14 +478,15 @@ async fn run_auto_sync(sym: &Symposium, deps: &Arc<WorkspaceDeps>, session_start
 
     // SessionStart always syncs (and refreshes sources); other events skip
     // when the workspace hasn't changed since the last sync.
+    let mut dependencies_changed = false;
     if !session_start && let Some(ref root) = workspace_root {
         let state = crate::workspace_state::WorkspaceState::load(sym, root);
         if state.sync_is_fresh(root) {
             tracing::debug!("auto-sync skipped: Cargo.lock unchanged since last sync");
             return false;
         }
+        dependencies_changed = state.last_sync_lock_mtime.is_some();
     }
-    let dependencies_changed = !session_start && workspace_root.is_some();
 
     let update = if session_start {
         symposium_install::UpdateLevel::Check

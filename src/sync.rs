@@ -455,6 +455,7 @@ pub async fn sync(sym: &Symposium, deps: &Arc<WorkspaceDeps>, update: UpdateLeve
     // Track every skill directory we (re)install during this sync. Anything
     // we find later that has the marker file but isn't in this set is stale.
     let mut installed_dirs: BTreeSet<PathBuf> = BTreeSet::new();
+    let skip_cleanup = !registry.unreadable_registries.is_empty();
 
     for agent_name in &agent_names {
         let agent = Agent::from_config_name(agent_name)?;
@@ -500,12 +501,24 @@ pub async fn sync(sym: &Symposium, deps: &Arc<WorkspaceDeps>, update: UpdateLeve
             );
         }
         match agent.register_mcp_servers(mcp_scope, &project_root, sym, &mcp_servers, out) {
-            Ok(names) => record_mcp_registrations(
-                sym,
-                agent,
-                &agent.mcp_config_path(mcp_scope, &project_root, sym),
-                names,
-            ),
+            Ok(names) => {
+                let file = agent.mcp_config_path(mcp_scope, &project_root, sym);
+                let project_file =
+                    agent.mcp_config_path(crate::agents::McpScope::Project, &project_root, sym);
+                let offered: &[String] = if file == project_file { &names } else { &[] };
+                if agent.supports_project_mcp_scope() && !skip_cleanup {
+                    unregister_recorded_mcp_servers(
+                        sym,
+                        |_, registration| {
+                            registration.agent == *agent_name
+                                && registration.file == project_file
+                                && !offered.contains(&registration.name)
+                        },
+                        out,
+                    );
+                }
+                record_mcp_registrations(sym, agent, &file, names);
+            }
             Err(e) => {
                 tracing::info!(
                     report = %crate::report::ReportEvent::Warning {
@@ -602,7 +615,6 @@ pub async fn sync(sym: &Symposium, deps: &Arc<WorkspaceDeps>, update: UpdateLeve
     // and remove subdirs containing the marker that we didn't just install.
     // Compared by resolved path, since one agent's skills dir can be a symlink
     // to another's. A symlink entry is user content and is never followed.
-    let skip_cleanup = !registry.unreadable_registries.is_empty();
     let installed: BTreeSet<PathBuf> = installed_dirs
         .iter()
         .filter_map(|dir| dir.canonicalize().ok())
@@ -758,23 +770,34 @@ fn record_mcp_registrations(sym: &Symposium, agent: Agent, file: &Path, names: V
 }
 
 /// Remove the MCP entries Symposium wrote for agents that are not configured,
-/// in the files `in_reach` accepts. An entry whose removal fails stays
-/// recorded, so the next run retries it.
+/// in the files `in_reach` accepts.
 fn unregister_unconfigured_mcp_servers(
     sym: &Symposium,
     agent_names: &[String],
     in_reach: impl Fn(Agent, &Path) -> bool,
     out: &Output,
 ) {
+    unregister_recorded_mcp_servers(
+        sym,
+        |agent, registration| {
+            !agent_names.contains(&registration.agent) && in_reach(agent, &registration.file)
+        },
+        out,
+    );
+}
+
+/// An entry whose removal fails stays recorded, so the next run retries it.
+fn unregister_recorded_mcp_servers(
+    sym: &Symposium,
+    stale: impl Fn(Agent, &crate::state::McpRegistration) -> bool,
+    out: &Output,
+) {
     let mut removed = Vec::new();
     for registration in crate::state::mcp_registrations(sym.config_dir()) {
-        if agent_names.contains(&registration.agent) {
-            continue;
-        }
         let Ok(agent) = Agent::from_config_name(&registration.agent) else {
             continue;
         };
-        if in_reach(agent, &registration.file)
+        if stale(agent, &registration)
             && agent
                 .unregister_mcp_servers(&registration.file, &[&registration.name], out)
                 .is_ok()

@@ -896,6 +896,46 @@ async fn removing_an_agent_removes_only_its_registered_mcp_servers() {
     .unwrap();
 }
 
+#[tokio::test]
+async fn sync_removes_an_mcp_server_the_workspace_no_longer_offers() {
+    with_fixture(
+        TestMode::SimulationOnly,
+        &["dormant-plugin0"],
+        async |mut ctx| {
+            let manifest = ctx
+                .sym
+                .config_dir()
+                .join("plugins/gateless-plugin/Symposium.toml");
+            let mut contents = std::fs::read_to_string(&manifest)?;
+            contents.push_str(
+                "\n[[mcp_servers]]\nname = \"gateless-server\"\ncommand = \"/usr/bin/true\"\nargs = []\nenv = []\n",
+            );
+            std::fs::write(&manifest, contents)?;
+
+            ctx.symposium(&["init", "--add-agent", "claude"]).await?;
+            ctx.symposium(&["use", "gateless-plugin"]).await?;
+
+            let mcp = ctx.workspace_root.clone().unwrap().join(".mcp.json");
+            let mut config: Value = serde_json::from_str(&std::fs::read_to_string(&mcp)?)?;
+            assert!(config["mcpServers"]["gateless-server"].is_object(), "{config}");
+            config["mcpServers"]["mine"] = serde_json::json!({ "command": "/home/me/mine" });
+            std::fs::write(&mcp, config.to_string())?;
+
+            ctx.symposium(&["use", "--remove", "gateless-plugin"])
+                .await?;
+            ctx.symposium(&["sync"]).await?;
+
+            let after: Value = serde_json::from_str(&std::fs::read_to_string(&mcp)?)?;
+            assert!(after["mcpServers"].get("gateless-server").is_none(), "{after}");
+            assert!(after["mcpServers"]["mine"].is_object(), "{after}");
+
+            Ok(())
+        },
+    )
+    .await
+    .unwrap();
+}
+
 /// `sync` does not install skills targeting transitive dependencies.
 /// workspace0 has tokio as a direct dep; mio is a transitive dep of tokio.
 #[tokio::test]

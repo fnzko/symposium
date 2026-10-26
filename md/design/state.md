@@ -17,7 +17,7 @@ file = "/Users/me/.claude.json"
 name = "demo"
 ```
 
-`file` is the path `Agent::mcp_config_path` returned when the entry was written. Removing an agent's MCP servers goes through this ledger only: an entry comes out of the file it was written to, and leaves the ledger once that succeeds (a failure keeps it, so the next run retries).
+`file` is the path `Agent::mcp_config_path` returned when the entry was written. Removing MCP servers goes through this ledger only: an entry comes out of the file it was written to, and leaves the ledger once that succeeds (a failure keeps it, so the next run retries).
 
 The ledger exists because a server name is not proof of ownership. A user, or their team in a committed project file, may have their own server named like a plugin's, in an agent Symposium does not manage. Removing by name deleted those. Nothing can be marked inside the agent files instead: several agents reject unknown keys, and JSON has no comments.
 

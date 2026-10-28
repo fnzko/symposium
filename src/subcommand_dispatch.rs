@@ -137,7 +137,7 @@ pub async fn dispatch_external(
         })?;
 
     let runnable = resolve_runnable(
-        acquire_installation(sym, installation, None, None, UpdateLevel::None).await?,
+        acquire_installation(sym, installation, None, None, UpdateLevel::None, None).await?,
         &format!("subcommand `{name}`"),
     )?;
 

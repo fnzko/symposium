@@ -217,8 +217,8 @@ fn spawn_from_spec(
     dir: Option<&Path>,
     stdout: &File,
     stderr: &File,
-) -> std::io::Result<std::process::Child> {
-    match spec {
+) -> std::io::Result<symposium_install::process_tree::Tree> {
+    let mut cmd = match spec {
         SpawnSpec::Script { path, args, env } => {
             let mut cmd = Command::new("sh");
             cmd.arg(path).args(args);
@@ -229,10 +229,7 @@ fn spawn_from_spec(
                 cmd.env(k, v);
             }
             symposium_install::process_tree::own_group(&mut cmd);
-            cmd.stdin(Stdio::piped())
-                .stdout(stdout.try_clone()?)
-                .stderr(stderr.try_clone()?)
-                .spawn()
+            cmd
         }
         SpawnSpec::Exec { path, args, env } => {
             let mut cmd = Command::new(path);
@@ -244,12 +241,13 @@ fn spawn_from_spec(
                 cmd.env(k, v);
             }
             symposium_install::process_tree::own_group(&mut cmd);
-            cmd.stdin(Stdio::piped())
-                .stdout(stdout.try_clone()?)
-                .stderr(stderr.try_clone()?)
-                .spawn()
+            cmd
         }
-    }
+    };
+    cmd.stdin(Stdio::piped())
+        .stdout(stdout.try_clone()?)
+        .stderr(stderr.try_clone()?);
+    symposium_install::process_tree::spawn(cmd)
 }
 
 const PLUGIN_HOOK_TIMEOUT: Duration = Duration::from_secs(5);
@@ -266,7 +264,7 @@ fn run_with_deadline(
     let stdout = tempfile::tempfile()?;
     let stderr = tempfile::tempfile()?;
     let mut child = spawn_from_spec(spec, dir, &stdout, &stderr)?;
-    if let Some(mut stdin) = child.stdin.take() {
+    if let Some(mut stdin) = child.take_stdin() {
         std::thread::spawn(move || {
             let _ = stdin.write_all(&input);
         });
@@ -276,9 +274,7 @@ fn run_with_deadline(
             break status;
         }
         if Instant::now() >= deadline {
-            symposium_install::process_tree::kill(child.id());
-            let _ = child.kill();
-            child.wait()?;
+            child.kill();
             return Ok(None);
         }
         std::thread::sleep(Duration::from_millis(10));

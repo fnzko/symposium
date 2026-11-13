@@ -2547,6 +2547,7 @@ dependencies = [
  "clap",
  "flate2",
  "libc",
+ "process-wrap",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -2554,6 +2555,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -42,16 +42,10 @@ async fn status_by(
     deadline: Instant,
 ) -> std::io::Result<Option<ExitStatus>> {
     symposium_install::process_tree::own_group(&mut command);
-    let mut child = tokio::process::Command::from(command).spawn()?;
-    match tokio::time::timeout_at(deadline.into(), child.wait()).await {
+    let status = symposium_install::process_tree::status(command);
+    match tokio::time::timeout_at(deadline.into(), status).await {
         Ok(status) => status.map(Some),
-        Err(_) => {
-            if let Some(pid) = child.id() {
-                symposium_install::process_tree::kill(pid);
-            }
-            let _ = child.kill().await;
-            Ok(None)
-        }
+        Err(_) => Ok(None),
     }
 }
 

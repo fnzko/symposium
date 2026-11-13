@@ -70,6 +70,9 @@ process-wrap = { version = "10.0.1", default-features = false, features = ["toki
 [target.'cfg(unix)'.dev-dependencies]
 libc = "0.2"
 
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Diagnostics_ToolHelp"] }
+
 [dev-dependencies]
 assert_matches = "1.5"
 expect-test = "1.5.1"

@@ -1,0 +1,72 @@
+name: Windows hook kill diagnosis
+
+on:
+  push:
+    branches: [windows-hook-kill-diag]
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: 0
+
+jobs:
+  diag:
+    name: ${{ matrix.variant }}
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: baseline
+            ref: e085536e675f7655dbfda78ba630616b56ea1760
+          - variant: fix
+            ref: ''
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref || github.sha }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: hook-diag-${{ matrix.variant }}
+
+      - name: Put sh on PATH
+        shell: bash
+        run: echo 'C:\Program Files\Git\usr\bin' >> "$GITHUB_PATH"
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Disable agent tests
+        shell: bash
+        run: echo 'test-agents = []' > test-agents.toml
+
+      - name: Build the tests
+        run: cargo test --workspace --no-run
+
+      - name: Probes
+        if: always()
+        run: cargo test --test windows_hook_diag -- --nocapture --test-threads=1
+
+      - name: hook_timeout under nextest
+        if: always()
+        run: cargo nextest run --test hook_timeout --no-fail-fast
+
+      - name: Hook unit tests under nextest
+        if: always()
+        run: cargo nextest run --lib --no-fail-fast -E 'test(hook::tests::)'
+
+      - name: Full suite under nextest
+        if: always() && matrix.variant == 'fix'
+        run: cargo nextest run --workspace --no-fail-fast
+
+      - name: Full suite under cargo test
+        if: always() && matrix.variant == 'fix'
+        run: cargo test --workspace --no-fail-fast

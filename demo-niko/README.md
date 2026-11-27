@@ -6,46 +6,30 @@ In the outputs, `<DEMO>` is `~/symposium-demo`, and `~` in symposium's output is
 
 ## 0. Setup
 
-Everything runs with `HOME=~/symposium-demo/home`, so neither symposium nor the agents touch your real config. Rustup, the cargo cache, asdf, mise and nvm keep pointing at your real folders, so toolchains and agent binaries still resolve.
-
-### Sandbox shell
-
-Save this as `~/symposium-demo/env.sh`:
-
-```sh
-if [ -z "${SYMPOSIUM_DEMO_REAL_HOME:-}" ]; then
-  export SYMPOSIUM_DEMO_REAL_HOME="$HOME"
-fi
-_real="$SYMPOSIUM_DEMO_REAL_HOME"
-export DEMO="${DEMO:-$_real/symposium-demo}"
-export RUSTUP_HOME="${RUSTUP_HOME:-$_real/.rustup}"
-export CARGO_HOME="${CARGO_HOME:-$_real/.cargo}"
-[ -d "$_real/.asdf" ] && export ASDF_DATA_DIR="${ASDF_DATA_DIR:-$_real/.asdf}"
-[ -d "$_real/.local/share/mise" ] && export MISE_DATA_DIR="${MISE_DATA_DIR:-$_real/.local/share/mise}"
-[ -d "$_real/.config/mise" ] && export MISE_CONFIG_DIR="${MISE_CONFIG_DIR:-$_real/.config/mise}"
-[ -d "$_real/.nvm" ] && export NVM_DIR="${NVM_DIR:-$_real/.nvm}"
-unset SYMPOSIUM_HOME CLAUDE_CONFIG_DIR CODEX_HOME COPILOT_HOME GOOSE_PATH_ROOT XDG_CONFIG_HOME
-export HOME="$DEMO/home"
-mkdir -p "$HOME" "$DEMO/bin"
-[ -f "$_real/.tool-versions" ] && ln -sf "$_real/.tool-versions" "$HOME/.tool-versions"
-case ":$PATH:" in
-  *":$DEMO/bin:"*) ;;
-  *) export PATH="$DEMO/bin:$PATH" ;;
-esac
-unset _real
-echo "demo shell: HOME=$HOME"
-```
-
-Then source it from a normal shell, and again in every terminal you use for the demo. Without cargo-binstall, install with `cargo install symposium --version 0.7.0 --locked --root "$DEMO"` instead.
+Run this once in every terminal you use for the demo:
 
 ```bash
-. ~/symposium-demo/env.sh
+export DEMO=~/symposium-demo REAL_HOME=$HOME
+export RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup} CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}
+export HOME=$DEMO/home PATH=$DEMO/bin:$PATH
+mkdir -p $HOME
+```
+
+Why `HOME` has to move:
+- The agent relocation variables (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `SYMPOSIUM_HOME`) are not enough. The Antigravity and Kiro hook files always live under `~`.
+- `init` removes symposium's hooks from every agent you don't select, so with the real `HOME` it would edit those files.
+- `RUSTUP_HOME` and `CARGO_HOME` keep cargo working.
+- If `claude` or `codex` come from asdf, mise or nvm, export `ASDF_DATA_DIR`, `MISE_DATA_DIR` or `NVM_DIR` at the real path before the `HOME` line.
+
+Install 0.7.0 into the sandbox. Without cargo-binstall, use `cargo install symposium --version 0.7.0 --locked --root "$DEMO"`.
+
+```bash
 cargo binstall symposium --version 0.7.0 --root "$DEMO" -y
 ```
 
 `$DEMO/bin` now holds `symposium`, `cargo-agents` and `symposium-pm-cargo`. Log the agents in inside the sandbox:
 - Claude: run `claude auth login`. Alternatively, run `claude setup-token` in a normal shell and export `CLAUDE_CODE_OAUTH_TOKEN` here.
-- Codex: `mkdir -p ~/.codex && cp "$SYMPOSIUM_DEMO_REAL_HOME/.codex/auth.json" ~/.codex/`.
+- Codex: `mkdir -p ~/.codex && cp "$REAL_HOME/.codex/auth.json" ~/.codex/`.
 
 ### Fixtures
 
@@ -56,7 +40,7 @@ cargo binstall symposium --version 0.7.0 --root "$DEMO" -y
 | `plugins/rust-review` | Agent Plugins package. |
 | `plugins/claude-changelog` | Claude Code plugin with one command and one `Stop` hook. |
 
-Create these files under `$DEMO/work` (that is, `~/symposium-demo/work`).
+Create these files under `$DEMO/work`, which is `symposium-demo/work` in your real home.
 
 `demo-app/Cargo.toml`:
 

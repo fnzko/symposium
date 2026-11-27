@@ -6,11 +6,13 @@ In the outputs, `<DEMO>` is `~/symposium-demo`, and `~` in symposium's output is
 
 ## 0. Setup
 
-Everything runs with `HOME=~/symposium-demo/home`, so neither symposium nor the agents touch your real config. Rustup, the cargo cache, asdf, mise and nvm keep pointing at your real folders, so toolchains and agent binaries still resolve. Paste this once from a normal shell; other terminals only need the last line.
+Everything runs with `HOME=~/symposium-demo/home`, so neither symposium nor the agents touch your real config. Rustup, the cargo cache, asdf, mise and nvm keep pointing at your real folders, so toolchains and agent binaries still resolve.
 
-```bash
-mkdir -p ~/symposium-demo
-cat > ~/symposium-demo/env.sh <<'EOF'
+### Sandbox shell
+
+Save this as `~/symposium-demo/env.sh`:
+
+```sh
 if [ -z "${SYMPOSIUM_DEMO_REAL_HOME:-}" ]; then
   export SYMPOSIUM_DEMO_REAL_HOME="$HOME"
 fi
@@ -32,13 +34,12 @@ case ":$PATH:" in
 esac
 unset _real
 echo "demo shell: HOME=$HOME"
-EOF
-. ~/symposium-demo/env.sh
 ```
 
-Install 0.7.0 into the sandbox. Without cargo-binstall, use `cargo install symposium --version 0.7.0 --locked --root "$DEMO"`.
+Then source it from a normal shell, and again in every terminal you use for the demo. Without cargo-binstall, install with `cargo install symposium --version 0.7.0 --locked --root "$DEMO"` instead.
 
 ```bash
+. ~/symposium-demo/env.sh
 cargo binstall symposium --version 0.7.0 --root "$DEMO" -y
 ```
 
@@ -46,7 +47,7 @@ cargo binstall symposium --version 0.7.0 --root "$DEMO" -y
 - Claude: run `claude auth login`. Alternatively, run `claude setup-token` in a normal shell and export `CLAUDE_CODE_OAUTH_TOKEN` here.
 - Codex: `mkdir -p ~/.codex && cp "$SYMPOSIUM_DEMO_REAL_HOME/.codex/auth.json" ~/.codex/`.
 
-The fixtures go to `$DEMO/work`:
+### Fixtures
 
 | Fixture | |
 |---|---|
@@ -55,14 +56,11 @@ The fixtures go to `$DEMO/work`:
 | `plugins/rust-review` | Agent Plugins package. |
 | `plugins/claude-changelog` | Claude Code plugin with one command and one `Stop` hook. |
 
-```bash
-mkdir -p "$DEMO/work" && cd "$DEMO/work"
-mkdir -p demo-app/src demo-app/scripts acme-retry/src acme-retry/skills/retry-policies \
-  acme-metrics/src acme-metrics/skills/metric-naming \
-  plugins/rust-review/skills/review-unsafe \
-  plugins/claude-changelog/.claude-plugin plugins/claude-changelog/commands plugins/claude-changelog/hooks
+Create these files under `$DEMO/work` (that is, `~/symposium-demo/work`).
 
-cat > demo-app/Cargo.toml <<'EOF'
+`demo-app/Cargo.toml`:
+
+```toml
 [package]
 name = "demo-app"
 version = "0.1.0"
@@ -74,9 +72,11 @@ anyhow = "1"
 acme-retry = { path = "../acme-retry" }
 
 [workspace]
-EOF
+```
 
-cat > demo-app/src/main.rs <<'EOF'
+`demo-app/src/main.rs`:
+
+```rust
 use anyhow::Result;
 
 fn main() -> Result<()> {
@@ -84,9 +84,11 @@ fn main() -> Result<()> {
     println!("answer: {attempts}");
     Ok(())
 }
-EOF
+```
 
-cat > demo-app/Symposium.toml <<'EOF'
+`demo-app/Symposium.toml`:
+
+```toml
 [[hooks]]
 name = "no-publish"
 event = "PreToolUse"
@@ -97,9 +99,11 @@ command = { script = "scripts/no-publish.sh" }
 description = "Run the demo-app team checks (fmt, tests)"
 audience = "agents"
 command = { script = "scripts/demo-check.sh" }
-EOF
+```
 
-cat > demo-app/scripts/no-publish.sh <<'EOF'
+`demo-app/scripts/no-publish.sh`:
+
+```sh
 #!/bin/sh
 input=$(cat)
 if printf '%s' "$input" | grep -q 'cargo publish' && ! printf '%s' "$input" | grep -q -- '--dry-run'; then
@@ -107,9 +111,11 @@ if printf '%s' "$input" | grep -q 'cargo publish' && ! printf '%s' "$input" | gr
   exit 2
 fi
 exit 0
-EOF
+```
 
-cat > demo-app/scripts/demo-check.sh <<'EOF'
+`demo-app/scripts/demo-check.sh`:
+
+```sh
 #!/bin/sh
 set -e
 echo "demo-check: cargo fmt --check"
@@ -117,18 +123,21 @@ cargo fmt --check
 echo "demo-check: cargo test"
 cargo test --quiet
 echo "demo-check: all good"
-EOF
-chmod +x demo-app/scripts/*.sh
+```
 
-cat > acme-retry/Cargo.toml <<'EOF'
+`acme-retry/Cargo.toml`:
+
+```toml
 [package]
 name = "acme-retry"
 version = "0.3.1"
 edition = "2021"
 publish = false
-EOF
+```
 
-cat > acme-retry/src/lib.rs <<'EOF'
+`acme-retry/src/lib.rs`:
+
+```rust
 pub fn with_retries<T, E>(attempts: u32, mut op: impl FnMut() -> Result<T, E>) -> Result<T, E> {
     let mut last = op();
     for _ in 1..attempts {
@@ -139,9 +148,11 @@ pub fn with_retries<T, E>(attempts: u32, mut op: impl FnMut() -> Result<T, E>) -
     }
     last
 }
-EOF
+```
 
-cat > acme-retry/skills/retry-policies/SKILL.md <<'EOF'
+`acme-retry/skills/retry-policies/SKILL.md`:
+
+```markdown
 ---
 name: retry-policies
 description: How to retry fallible operations with acme-retry. Use when adding retries, backoff, or idempotency checks around network or IO calls.
@@ -152,23 +163,29 @@ description: How to retry fallible operations with acme-retry. Use when adding r
 - Wrap the fallible call in `acme_retry::with_retries(n, || ...)`.
 - Only retry idempotent operations.
 - Keep `n` small (3 is the team default) and log the final error with `anyhow::Context`.
-EOF
+```
 
-cat > acme-metrics/Cargo.toml <<'EOF'
+`acme-metrics/Cargo.toml`:
+
+```toml
 [package]
 name = "acme-metrics"
 version = "1.2.0"
 edition = "2021"
 publish = false
-EOF
+```
 
-cat > acme-metrics/src/lib.rs <<'EOF'
+`acme-metrics/src/lib.rs`:
+
+```rust
 pub fn counter(name: &str) -> String {
     format!("acme.{name}")
 }
-EOF
+```
 
-cat > acme-metrics/skills/metric-naming/SKILL.md <<'EOF'
+`acme-metrics/skills/metric-naming/SKILL.md`:
+
+```markdown
 ---
 name: metric-naming
 description: Naming rules for acme-metrics counters and gauges. Use when adding or renaming a metric.
@@ -178,9 +195,11 @@ description: Naming rules for acme-metrics counters and gauges. Use when adding 
 
 - Names are `snake_case`, prefixed by the subsystem: `http_requests_total`.
 - Counters end in `_total`; durations end in `_seconds`.
-EOF
+```
 
-cat > plugins/rust-review/plugin.json <<'EOF'
+`plugins/rust-review/plugin.json`:
+
+```json
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "rust-review",
@@ -188,9 +207,11 @@ cat > plugins/rust-review/plugin.json <<'EOF'
   "description": "Review checklist for unsafe Rust",
   "license": "MIT"
 }
-EOF
+```
 
-cat > plugins/rust-review/skills/review-unsafe/SKILL.md <<'EOF'
+`plugins/rust-review/skills/review-unsafe/SKILL.md`:
+
+```markdown
 ---
 name: review-unsafe
 description: Checklist for reviewing unsafe Rust blocks. Use when the user asks to review code that contains `unsafe`.
@@ -201,25 +222,31 @@ description: Checklist for reviewing unsafe Rust blocks. Use when the user asks 
 1. Every `unsafe` block has a `// SAFETY:` comment naming the invariant it relies on.
 2. The invariant is upheld by every caller, not just the current one.
 3. Prefer a safe abstraction with a small unsafe core over many scattered blocks.
-EOF
+```
 
-cat > plugins/claude-changelog/.claude-plugin/plugin.json <<'EOF'
+`plugins/claude-changelog/.claude-plugin/plugin.json`:
+
+```json
 {
   "name": "Claude-Changelog",
   "version": "1.0.0",
   "description": "Keep CHANGELOG.md up to date"
 }
-EOF
+```
 
-cat > plugins/claude-changelog/commands/changelog.md <<'EOF'
+`plugins/claude-changelog/commands/changelog.md`:
+
+```markdown
 ---
 description: Add an entry to CHANGELOG.md for the change just made
 ---
 
 Read the staged diff, then add one line under `## [Unreleased]` in CHANGELOG.md describing the user-visible change.
-EOF
+```
 
-cat > plugins/claude-changelog/hooks/hooks.json <<'EOF'
+`plugins/claude-changelog/hooks/hooks.json`:
+
+```json
 {
   "hooks": {
     "Stop": [
@@ -231,7 +258,12 @@ cat > plugins/claude-changelog/hooks/hooks.json <<'EOF'
     ]
   }
 }
-EOF
+```
+
+Then make the two team scripts executable:
+
+```bash
+chmod +x "$DEMO/work/demo-app/scripts/"*.sh
 ```
 
 ## 1. `init` (Set up Symposium, AT-SETUP-01, [#424](https://github.com/symposium-dev/symposium/issues/424))
@@ -514,12 +546,20 @@ Run this one last: it installs a plugin for every workspace. It uses just-right-
 ```bash
 git clone -q https://github.com/symposium-dev/just-right-rust "$DEMO/just-right-rust"
 mkdir -p "$DEMO/registry" && ln -s "$DEMO/just-right-rust" "$DEMO/registry/just-right-rust"
-cat >> ~/.symposium/config.toml <<EOF
+echo "$DEMO/registry"
+```
 
+Append the following to `~/.symposium/config.toml`. Replace the `path` value with the absolute path the `echo` above printed:
+
+```toml
 [[registry]]
 name = "jrr-main"
-path = "$DEMO/registry"
-EOF
+path = "/Users/you/symposium-demo/registry"
+```
+
+Then run:
+
+```bash
 symposium status | grep just-right
 cd ~
 symposium use just-right-rust --global
@@ -558,13 +598,21 @@ cd "$DEMO/work/demo-app"
 git init -q && git add Cargo.toml Cargo.lock Symposium.toml src scripts && git -c user.name=demo -c user.email=demo@localhost commit -qm base
 S=$(printf '{"session_id":"jrr","cwd":"%s","hook_event_name":"SessionStart","source":"startup"}' "$PWD")
 echo "$S" | symposium hook claude session-start | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"].splitlines()), "lines of context")'
-cat >> src/main.rs <<'EOF'
+```
+
+Now play the session's edit by appending this to `src/main.rs`:
+
+```rust
 
 fn parse(s: &str) -> Result<u16, String> {
     let n: i64 = s.parse().unwrap();
     Ok(n as u16)
 }
-EOF
+```
+
+Then fire Stop twice:
+
+```bash
 P=$(printf '{"session_id":"jrr","cwd":"%s","hook_event_name":"Stop","stop_hook_active":false}' "$PWD")
 echo "$P" | symposium hook claude stop; echo "exit $?"
 echo "$P" | symposium hook claude stop; echo "exit $?"

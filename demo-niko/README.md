@@ -1,6 +1,6 @@
 # Symposium 0.7.0 walkthrough
 
-A self-guided pass over 0.7.0, one topic per journey on the project board. Every command was run on macOS on 2026-11-23 against released 0.7.0. The outputs are verbatim, trimmed to the lines that matter. The CLI, hook payloads and `codex debug prompt-input` were checked; the agent TUI steps were not (the sandbox had no logins). About 30 minutes, plus 15 for the bonus topics. Run topic 6 last, because it slows every hook down.
+A self-guided pass over 0.7.0, one topic per journey on the project board. Every command was run on macOS on 2026-11-23 against released 0.7.0. The outputs are verbatim, trimmed to the lines that matter. The CLI, hook payloads and `codex debug prompt-input` were checked; the agent TUI steps were not (the sandbox had no logins). About 30 minutes, plus 15 for the bonus topics. Topic 6 comes after the bonus topics because it installs a plugin for every workspace.
 
 In the outputs, `<DEMO>` is `~/symposium-demo`, and `~` in symposium's output is the sandbox home `<DEMO>/home`.
 
@@ -463,43 +463,6 @@ installed plugin rust-review for codex -> ~/.codex/plugins/cache/symposium/rust-
 
 `try` links the folder into the `user-plugins` registry. Because the plugin is dormant, `try` also records a global `use` entry. It then asks each agent what it actually loaded. Undo it with `symposium plugin try --remove rust-review`.
 
-## 6. `use --global` (AT-INSTALL, AT-INSTALL-04 is [#451](https://github.com/symposium-dev/symposium/issues/451))
-
-```bash
-cd ~
-symposium use just-right-rust --global
-ls ~/.claude/skills/just-right-rust/skills
-grep -A1 just-right ~/.codex/config.toml
-```
-
-```text
-✅ enabled just-right-rust for every workspace
-installed plugin just-right-rust for claude -> ~/.claude/skills/just-right-rust
-installed plugin just-right-rust for codex -> ~/.codex/plugins/cache/symposium/just-right-rust
-async-rust
-unsafe-rust-review
-[plugins."just-right-rust@symposium"]
-enabled = true
-```
-
-The install works, but living with it does not yet. just-right-rust 0.1.1 declares hooks whose helper binary symposium `cargo install`s inside each hook event. That never finishes within the 8 s hook budget. As a result, every hook event in a Rust workspace waits 8 to 9 s and leaves a ~200 MB `cargo-install*` folder in `$TMPDIR`.
-
-```bash
-cd "$DEMO/work/demo-app"
-time (printf '{"session_id":"demo","cwd":"%s","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"}}' "$PWD" | symposium hook claude pre-tool-use)
-```
-
-Two fixes are pending:
-- [#512](https://github.com/symposium-dev/symposium/issues/512) installs hook helpers at `use` and `sync` instead of per event. With it, the install takes 35 s once and hooks then answer in 0.08 to 0.3 s.
-- just-right-rust 0.1.2 drops the no-op hooks ([symposium-dev/just-right-rust#2](https://github.com/symposium-dev/just-right-rust/issues/2)). It is unpublished, and you are the only crates.io owner.
-
-Undo it before any other topic. Then, if no other `cargo install` is running, delete the leftovers.
-
-```bash
-symposium use just-right-rust --global --remove
-rm -rf "${TMPDIR:-/tmp}"/cargo-install*
-```
-
 ## Bonus
 
 ### B1. Out-of-process package manager (AT-ECOSYSTEM)
@@ -544,6 +507,88 @@ Nothing beyond the digest can be shown. `symposium-dev/audits` is private and ha
 
 From a symposium checkout, `cargo xtask agent-eval --check-tasks` prints `ok formatting`, `ok store-durability` and `checked 2 tasks`. Real trials run under `srt` and need Linux, so none were run for this.
 
+## 6. just-right-rust for every workspace (AT-INSTALL, AT-INSTALL-04 is [#451](https://github.com/symposium-dev/symposium/issues/451))
+
+Run this one last: it installs a plugin for every workspace. It uses just-right-rust `main` at e3e2da7, which merged [symposium-dev/just-right-rust#3](https://github.com/symposium-dev/just-right-rust/pull/3): a rules entry skill, six guides, and two script hooks. crates.io still has 0.1.1, whose hooks stall 0.7.0, so do not take that one (see the end of this topic). Instead, `main` is served from a path registry, since a registry plugin wins over the crate of the same name. The registry root cannot itself be an entry, which is why the clone is linked from a separate folder.
+
+```bash
+git clone -q https://github.com/symposium-dev/just-right-rust "$DEMO/just-right-rust"
+mkdir -p "$DEMO/registry" && ln -s "$DEMO/just-right-rust" "$DEMO/registry/just-right-rust"
+cat >> ~/.symposium/config.toml <<EOF
+
+[[registry]]
+name = "jrr-main"
+path = "$DEMO/registry"
+EOF
+symposium status | grep just-right
+cd ~
+symposium use just-right-rust --global
+ls ~/.claude/skills/just-right-rust/skills
+codex debug prompt-input hi | grep -o 'just-right-rust:[a-z-]*' | sort -u
+```
+
+```text
+✅ just-right-rust — registry `jrr-main`
+✅ enabled just-right-rust for every workspace
+installed plugin just-right-rust for claude -> ~/.claude/skills/just-right-rust
+installed plugin just-right-rust for codex -> ~/.codex/plugins/cache/symposium/just-right-rust
+async-rust
+run-rust-tests
+rust-comments
+rust-domain-types
+rust-error-discipline
+rust-keep-it-simple
+rust-ownership
+rust-rules
+rust-test-quality
+unsafe-rust-review
+just-right-rust:async-rust
+...
+just-right-rust:unsafe-rust-review
+```
+
+`use --global` takes about 3.5 s, because the `unsafe-rust-review` group is a `source.git` group fetched from google/rust-skills. The manifest has no `version`, so the compiled plugin is `0.0.0`, and Codex caches it under `.../just-right-rust/0.0.0`.
+
+The hooks need a git repository:
+- At SessionStart, the hook records the working tree and returns the rules as context.
+- At Stop, it checks only the Rust lines added since then.
+
+```bash
+cd "$DEMO/work/demo-app"
+git init -q && git add Cargo.toml Cargo.lock Symposium.toml src scripts && git -c user.name=demo -c user.email=demo@localhost commit -qm base
+S=$(printf '{"session_id":"jrr","cwd":"%s","hook_event_name":"SessionStart","source":"startup"}' "$PWD")
+echo "$S" | symposium hook claude session-start | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"].splitlines()), "lines of context")'
+cat >> src/main.rs <<'EOF'
+
+fn parse(s: &str) -> Result<u16, String> {
+    let n: i64 = s.parse().unwrap();
+    Ok(n as u16)
+}
+EOF
+P=$(printf '{"session_id":"jrr","cwd":"%s","hook_event_name":"Stop","stop_hook_active":false}' "$PWD")
+echo "$P" | symposium hook claude stop; echo "exit $?"
+echo "$P" | symposium hook claude stop; echo "exit $?"
+```
+
+```text
+88 lines of context
+just-right-rust check: findings in the Rust lines this session added.
+untyped error: src/main.rs:9: fn parse(s: &str) -> Result<u16, String> {
+panic on failure: src/main.rs:10: let n: i64 = s.parse().unwrap();
+unchecked cast (fine only when it widens): src/main.rs:11: Ok(n as u16)
+Fix each one in the lines you added, changing existing code just enough where that is what it takes. That the existing code does the same is not a reason to keep one. Keep a finding only when the rule does not apply to that line, and say why in one line. Then finish.exit 2
+{}exit 0
+```
+
+What these outputs show:
+- **Stop:** the findings go to stderr with exit 2, which blocks Claude's stop and hands them to the model. Each finding is reported once, so the second Stop prints `{}`.
+- **SessionStart:** it takes about 1.4 s, including the registry freshness check, and it adds the rules in any folder, workspace or not.
+- **PreToolUse:** it answers in about 0.04 s.
+
+With 0.1.1 from crates.io, which is what `symposium use just-right-rust --global` installs without the registry, the hooks need a helper binary. Symposium `cargo install`s that binary inside each hook event and never finishes within the 8 s hook budget. Every event then waits 8 to 9 s and leaves a ~200 MB `cargo-install*` folder in `$TMPDIR`. Two changes fix it:
+- Publishing `main` as 0.1.2.
+- On the symposium side, [#512](https://github.com/symposium-dev/symposium/issues/512), which installs hook helpers at `use` and `sync` instead of per event.
+
 ## Bugs this pass found, with fixes open
 
 All of them reproduce on main:
@@ -561,7 +606,7 @@ All of them reproduce on main:
 
 ## Open gaps
 
-1. A global just-right-rust stalls every hook (topic 6); fixed by #512 plus a 0.1.2 publish.
+1. just-right-rust 0.1.1 from crates.io stalls every hook (topic 6). Publishing `main` fixes it, and so does #512 on the symposium side.
 2. Global packages ignore predicates: every condition counts as met (topic 6).
 3. `use` from another terminal does not tell a running session to reload (topic 3).
 4. The audits list is private and empty (B2).
@@ -570,8 +615,8 @@ All of them reproduce on main:
 
 ## Questions
 
-1. Should global packages still filter by predicates per workspace? You said yes on 2026-11-03 (AT-INSTALL-04). This demo cannot show it, because just-right-rust uses `depends-on = ["*"]`.
-2. Can you publish just-right-rust 0.1.2, or add another crates.io owner?
+1. Should global packages still filter by predicates per workspace? You said yes on 2026-11-03 (AT-INSTALL-04). This demo cannot show it, because just-right-rust uses `depends-on = ["*"]`. Its `main` keeps a commented-out `shell(...)` predicate for Rust files that waits on this answer.
+2. Can you publish just-right-rust `main` as 0.1.2 (with a `version` in `Symposium.toml`), or add another crates.io owner?
 3. When does the audits list go public, and who curates its first entries?
 4. Is this the delivery you want: project plugins for Claude Code, per-skill copies for Codex, and user-level plugins for `--global` and `try`?
 

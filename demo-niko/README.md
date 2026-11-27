@@ -1,141 +1,266 @@
-# Symposium demo: 0.7.0
+# Symposium 0.7.0 walkthrough
 
-A self-guided walk through what Symposium does today, organized by the user journeys on the project board. Each topic says what to run and what you should see. Every expected output below was captured with symposium 0.7.0 on macOS on 2026-11-23, using the fixtures in this folder.
+A self-guided pass over 0.7.0, one topic per journey on the project board. Every command was run on macOS on 2026-11-23 against released 0.7.0. The outputs are verbatim, trimmed to the lines that matter. The CLI, hook payloads and `codex debug prompt-input` were checked; the agent TUI steps were not (the sandbox had no logins). About 30 minutes, plus 15 for the bonus topics. Run topic 6 last, because it slows every hook down.
 
-Time: about 40 minutes for the core topics (1 to 6), 15 more for the bonus ones.
+In the outputs, `<DEMO>` is `~/symposium-demo`, and `~` in symposium's output is the sandbox home `<DEMO>/home`.
 
-## How each topic is laid out
+## 0. Setup
 
-- **Journey**: the board lane and admission tests it touches.
-- **Why it matters**: one line.
-- **Steps**: commands to copy, run from the demo shell.
-- **Expected**: what the command prints, trimmed to the lines that matter, and what to look for.
-- **In the agent**: what to check in the agent's TUI.
-- **Status**: what works and what does not yet.
-- **Reset**: how to undo the topic, when later topics would see it.
-- **Open question**: the decision the topic surfaces, when there is one.
-
-`<DEMO>` in the outputs stands for your `~/symposium-demo`. `~` in Symposium's own output is the sandbox home, `<DEMO>/home`.
-
-## 0. Setup (5 min)
-
-### What you need
-
-- A Rust toolchain installed with rustup, git, and network access (registries are fetched from GitHub).
-- Claude Code and, optionally, Codex CLI. Copilot CLI, Antigravity CLI and Goose work too, but the steps below show Claude and Codex.
-- `cargo-binstall` makes the install take seconds. Without it, `cargo install` builds symposium in a few minutes.
-
-### Enter the sandbox
-
-Symposium writes to your agents' configuration (`~/.claude/settings.json`, `~/.codex/hooks.json`, skill folders). To keep your real setup untouched, the demo runs with `HOME` pointing at a throwaway folder:
+Everything runs with `HOME=~/symposium-demo/home`, so neither symposium nor the agents touch your real config. Rustup, the cargo cache, asdf, mise and nvm keep pointing at your real folders, so toolchains and agent binaries still resolve. Paste this once from a normal shell; other terminals only need the last line.
 
 ```bash
-cd <this folder>
-. ./env.sh
+mkdir -p ~/symposium-demo
+cat > ~/symposium-demo/env.sh <<'EOF'
+if [ -z "${SYMPOSIUM_DEMO_REAL_HOME:-}" ]; then
+  export SYMPOSIUM_DEMO_REAL_HOME="$HOME"
+fi
+_real="$SYMPOSIUM_DEMO_REAL_HOME"
+export DEMO="${DEMO:-$_real/symposium-demo}"
+export RUSTUP_HOME="${RUSTUP_HOME:-$_real/.rustup}"
+export CARGO_HOME="${CARGO_HOME:-$_real/.cargo}"
+[ -d "$_real/.asdf" ] && export ASDF_DATA_DIR="${ASDF_DATA_DIR:-$_real/.asdf}"
+[ -d "$_real/.local/share/mise" ] && export MISE_DATA_DIR="${MISE_DATA_DIR:-$_real/.local/share/mise}"
+[ -d "$_real/.config/mise" ] && export MISE_CONFIG_DIR="${MISE_CONFIG_DIR:-$_real/.config/mise}"
+[ -d "$_real/.nvm" ] && export NVM_DIR="${NVM_DIR:-$_real/.nvm}"
+unset SYMPOSIUM_HOME CLAUDE_CONFIG_DIR CODEX_HOME COPILOT_HOME GOOSE_PATH_ROOT XDG_CONFIG_HOME
+export HOME="$DEMO/home"
+mkdir -p "$HOME" "$DEMO/bin"
+[ -f "$_real/.tool-versions" ] && ln -sf "$_real/.tool-versions" "$HOME/.tool-versions"
+case ":$PATH:" in
+  *":$DEMO/bin:"*) ;;
+  *) export PATH="$DEMO/bin:$PATH" ;;
+esac
+unset _real
+echo "demo shell: HOME=$HOME"
+EOF
+. ~/symposium-demo/env.sh
 ```
 
-It prints `demo shell: HOME=/Users/<you>/symposium-demo/home`. Rustup, the cargo registry cache, asdf and mise keep using your real folders, so toolchains and agent binaries still work. Source `env.sh` again in every terminal you use for the demo.
-
-### Install symposium 0.7.0 into the sandbox
+Install 0.7.0 into the sandbox. Without cargo-binstall, use `cargo install symposium --version 0.7.0 --locked --root "$DEMO"`.
 
 ```bash
 cargo binstall symposium --version 0.7.0 --root "$DEMO" -y
 ```
 
-Without cargo-binstall:
+`$DEMO/bin` now holds `symposium`, `cargo-agents` and `symposium-pm-cargo`. Log the agents in inside the sandbox:
+- Claude: run `claude auth login`. Alternatively, run `claude setup-token` in a normal shell and export `CLAUDE_CODE_OAUTH_TOKEN` here.
+- Codex: `mkdir -p ~/.codex && cp "$SYMPOSIUM_DEMO_REAL_HOME/.codex/auth.json" ~/.codex/`.
 
-```bash
-cargo install symposium --version 0.7.0 --locked --root "$DEMO"
-```
+The fixtures go to `$DEMO/work`:
 
-Then `symposium --version` prints `symposium 0.7.0`. Three binaries land in `$DEMO/bin`: `symposium`, `cargo-agents` and `symposium-pm-cargo`.
-
-### Copy the fixtures
-
-```bash
-mkdir -p "$DEMO/work" && cp -R fixtures/. "$DEMO/work/"
-```
-
-| Fixture | What it is |
+| Fixture | |
 |---|---|
-| `demo-app/` | A binary crate depending on `anyhow` and on `acme-retry`. Its `Symposium.toml` holds a team hook and a team command. |
-| `acme-retry/` | A dependency that ships a skill (`skills/retry-policies/`). |
-| `acme-metrics/` | A second such dependency, added during a session in topic 3. |
-| `plugins/rust-review/` | An Agent Plugins package: `plugin.json` and one skill. |
-| `plugins/claude-changelog/` | A Claude Code plugin: one command and one `Stop` hook. |
+| `demo-app` | Bin crate depending on `anyhow` and on the path dependency `acme-retry`. Its `Symposium.toml` declares a team hook and a team subcommand. |
+| `acme-retry`, `acme-metrics` | Path dependencies that ship a `skills/` folder and no manifest. |
+| `plugins/rust-review` | Agent Plugins package. |
+| `plugins/claude-changelog` | Claude Code plugin with one command and one `Stop` hook. |
 
-### Log your agents in, inside the sandbox
+```bash
+mkdir -p "$DEMO/work" && cd "$DEMO/work"
+mkdir -p demo-app/src demo-app/scripts acme-retry/src acme-retry/skills/retry-policies \
+  acme-metrics/src acme-metrics/skills/metric-naming \
+  plugins/rust-review/skills/review-unsafe \
+  plugins/claude-changelog/.claude-plugin plugins/claude-changelog/commands plugins/claude-changelog/hooks
 
-The sandbox home has no agent logins yet:
+cat > demo-app/Cargo.toml <<'EOF'
+[package]
+name = "demo-app"
+version = "0.1.0"
+edition = "2021"
+publish = false
 
-- Claude Code: `claude auth login`. Or run `claude setup-token` in a normal terminal and `export CLAUDE_CODE_OAUTH_TOKEN=<token>` in the demo shell.
-- Codex CLI: `codex login`, or copy your login: `mkdir -p ~/.codex && cp "$SYMPOSIUM_DEMO_REAL_HOME/.codex/auth.json" ~/.codex/`.
+[dependencies]
+anyhow = "1"
+acme-retry = { path = "../acme-retry" }
 
-`claude auth status` should report `"loggedIn": true`.
+[workspace]
+EOF
 
-## 1. Set up Symposium
+cat > demo-app/src/main.rs <<'EOF'
+use anyhow::Result;
 
-**Journey**: Set up Symposium (AT-SETUP-01, #424).
+fn main() -> Result<()> {
+    let attempts = acme_retry::with_retries(3, || Ok::<_, anyhow::Error>(42))?;
+    println!("answer: {attempts}");
+    Ok(())
+}
+EOF
 
-**Why it matters**: first contact. One command configures every agent you have.
+cat > demo-app/Symposium.toml <<'EOF'
+[[hooks]]
+name = "no-publish"
+event = "PreToolUse"
+matcher = "^(Bash|bash|run_command|execute_bash)$"
+command = { script = "scripts/no-publish.sh" }
 
-**Steps**:
+[subcommand.demo-check]
+description = "Run the demo-app team checks (fmt, tests)"
+audience = "agents"
+command = { script = "scripts/demo-check.sh" }
+EOF
+
+cat > demo-app/scripts/no-publish.sh <<'EOF'
+#!/bin/sh
+input=$(cat)
+if printf '%s' "$input" | grep -q 'cargo publish' && ! printf '%s' "$input" | grep -q -- '--dry-run'; then
+  echo "demo-app team rule: never run cargo publish from an agent session; use cargo publish --dry-run" >&2
+  exit 2
+fi
+exit 0
+EOF
+
+cat > demo-app/scripts/demo-check.sh <<'EOF'
+#!/bin/sh
+set -e
+echo "demo-check: cargo fmt --check"
+cargo fmt --check
+echo "demo-check: cargo test"
+cargo test --quiet
+echo "demo-check: all good"
+EOF
+chmod +x demo-app/scripts/*.sh
+
+cat > acme-retry/Cargo.toml <<'EOF'
+[package]
+name = "acme-retry"
+version = "0.3.1"
+edition = "2021"
+publish = false
+EOF
+
+cat > acme-retry/src/lib.rs <<'EOF'
+pub fn with_retries<T, E>(attempts: u32, mut op: impl FnMut() -> Result<T, E>) -> Result<T, E> {
+    let mut last = op();
+    for _ in 1..attempts {
+        if last.is_ok() {
+            break;
+        }
+        last = op();
+    }
+    last
+}
+EOF
+
+cat > acme-retry/skills/retry-policies/SKILL.md <<'EOF'
+---
+name: retry-policies
+description: How to retry fallible operations with acme-retry. Use when adding retries, backoff, or idempotency checks around network or IO calls.
+---
+
+# Retrying with acme-retry
+
+- Wrap the fallible call in `acme_retry::with_retries(n, || ...)`.
+- Only retry idempotent operations.
+- Keep `n` small (3 is the team default) and log the final error with `anyhow::Context`.
+EOF
+
+cat > acme-metrics/Cargo.toml <<'EOF'
+[package]
+name = "acme-metrics"
+version = "1.2.0"
+edition = "2021"
+publish = false
+EOF
+
+cat > acme-metrics/src/lib.rs <<'EOF'
+pub fn counter(name: &str) -> String {
+    format!("acme.{name}")
+}
+EOF
+
+cat > acme-metrics/skills/metric-naming/SKILL.md <<'EOF'
+---
+name: metric-naming
+description: Naming rules for acme-metrics counters and gauges. Use when adding or renaming a metric.
+---
+
+# Metric naming
+
+- Names are `snake_case`, prefixed by the subsystem: `http_requests_total`.
+- Counters end in `_total`; durations end in `_seconds`.
+EOF
+
+cat > plugins/rust-review/plugin.json <<'EOF'
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "rust-review",
+  "version": "0.1.0",
+  "description": "Review checklist for unsafe Rust",
+  "license": "MIT"
+}
+EOF
+
+cat > plugins/rust-review/skills/review-unsafe/SKILL.md <<'EOF'
+---
+name: review-unsafe
+description: Checklist for reviewing unsafe Rust blocks. Use when the user asks to review code that contains `unsafe`.
+---
+
+# Reviewing unsafe Rust
+
+1. Every `unsafe` block has a `// SAFETY:` comment naming the invariant it relies on.
+2. The invariant is upheld by every caller, not just the current one.
+3. Prefer a safe abstraction with a small unsafe core over many scattered blocks.
+EOF
+
+cat > plugins/claude-changelog/.claude-plugin/plugin.json <<'EOF'
+{
+  "name": "Claude-Changelog",
+  "version": "1.0.0",
+  "description": "Keep CHANGELOG.md up to date"
+}
+EOF
+
+cat > plugins/claude-changelog/commands/changelog.md <<'EOF'
+---
+description: Add an entry to CHANGELOG.md for the change just made
+---
+
+Read the staged diff, then add one line under `## [Unreleased]` in CHANGELOG.md describing the user-visible change.
+EOF
+
+cat > plugins/claude-changelog/hooks/hooks.json <<'EOF'
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "echo 'Remember: CHANGELOG.md' >&2" }
+        ]
+      }
+    ]
+  }
+}
+EOF
+```
+
+## 1. `init` (Set up Symposium, AT-SETUP-01, [#424](https://github.com/symposium-dev/symposium/issues/424))
 
 ```bash
 cd "$DEMO/work/demo-app"
 symposium init
 ```
 
-Press Enter at each question to take the defaults.
-
-**Expected**:
+Take the defaults. The agents detected from their config folders come preselected:
 
 ```text
-Setting up symposium for your user account.
-
 ℹ️  Detected: Claude Code, Codex CLI
-Which agents do you use? (space to select, enter to confirm):
-> [ ] Antigravity CLI
-  [x] Claude Code
-  [x] Codex CLI
-  [ ] GitHub Copilot
-  [ ] Goose
-  [ ] Kiro
-  [ ] OpenCode
 ...
 Install hooks and agent configuration: Globally (recommended)
 Automatic updates: Auto-update (recommended)
-Enable anonymous usage telemetry? It is stored locally under ~/.symposium/telemetry/ and never uploaded automatically — you can review it with `symposium telemetry show` and share it yourself no
+...
 ✅ ~/.symposium/config.toml: wrote user config (agents: Claude Code, Codex CLI)
 ✅ ~/.claude/settings.json: added hooks (PreToolUse, PostToolUse, UserPromptSubmit, SessionStart, Stop)
 ✅ ~/.codex/hooks.json: added hooks (PreToolUse, PostToolUse, UserPromptSubmit, SessionStart, Stop)
 ```
 
-Look for: the agents you logged into come preselected, detected by their config folder. The hook written into each agent's config calls `symposium`, which 0.7.0 made the primary command (`cargo agents` still works):
+The hook commands call `symposium`, now the primary binary (`cargo agents` still works). `grep -m1 'symposium hook' ~/.claude/settings.json` prints `"command": "symposium hook claude pre-tool-use"`. The telemetry question is asked, but nothing is recorded yet.
 
-```bash
-grep -m1 'symposium hook' ~/.claude/settings.json
-```
-
-```text
-            "command": "symposium hook claude pre-tool-use"
-```
-
-**Status**: works. The telemetry question is real, but nothing is recorded yet.
-
-## 2. Skills arrive with your dependencies
-
-**Journey**: Discover capabilities while coding (AT-DISCOVERY).
-
-**Why it matters**: the core promise. Depending on `anyhow` brings error-handling guidance with no configuration.
-
-**Steps**:
+## 2. Skills from dependencies (AT-DISCOVERY)
 
 ```bash
 symposium status
 ```
-
-**Expected**:
 
 ```text
 💤 assert-struct-guidance — registry `symposium-recommendations`
@@ -149,15 +274,9 @@ symposium status
 ❓ acme-retry 0.3.1 — found via dependency `acme-retry`, awaiting consent (`symposium use acme-retry`)
 ```
 
-Look for: `error-battery-pack` is active because the workspace depends on `anyhow`. `dial9` and the other sleeping entries wait for a dependency this workspace lacks. `rtk` names no dependency, so it waits for `symposium use`. `acme-retry` is a dependency's own plugin and waits for consent (topic 3). The registry entries are whatever symposium-dev/recommendations holds the day you run it.
+`error-battery-pack` is active through `anyhow`. The other sleeping entries are gated on dependencies this workspace lacks. `rtk` has no gate, so it is dormant until `use`. `acme-retry` is the dependency's own plugin, waiting for consent. The registry rows are whatever symposium-dev/recommendations holds on the day you run this.
 
-Now install. Sync asks about `acme-retry`; press Enter ("Ask me later") for now:
-
-```bash
-symposium sync
-```
-
-**Expected**:
+Run `symposium sync` and answer "Ask me later" (the default):
 
 ```text
 Dependency `acme-retry` provides 1 skill group. Enable it?: Ask me later
@@ -171,31 +290,25 @@ installed plugin error-battery-pack for claude -> <DEMO>/work/demo-app/.claude/s
 ✅ installed skill library-errors for codex → <DEMO>/work/demo-app/.agents/skills/library-errors
 ```
 
-Look for: Claude Code gets each plugin as one project plugin under `.claude/skills/<plugin>/`; Codex gets per-skill copies under `.agents/skills/`. Everything Symposium installs carries a `.gitignore` containing `*`, so the project's `git status` stays clean.
+Delivery differs per agent:
+- Claude Code gets one project plugin per plugin, under `.claude/skills/<plugin>/`.
+- Codex gets per-skill copies under `.agents/skills/`.
+- Every installed directory carries a `.gitignore` with `*`.
 
-**In the agent**:
+To check in the agents:
+- Claude only loads project plugins in a trusted folder started at the workspace root, so `/skills` lists them only in that case.
+- Codex can be checked without a model call: `codex debug prompt-input hi | grep -o -- '- [a-z-]*: '`.
 
-- Run `claude` in `<DEMO>/work/demo-app` and trust the folder (Claude Code loads project plugins only in a trusted folder, started at the workspace root). `/skills` lists `application-errors`, `rust-best-practice` and the rest. Ask "how should I handle errors in this crate?".
-- Run `codex` in the same folder and ask the same. To check without a model call: `codex debug prompt-input hi | grep -o -- '- [a-z-]*: '`.
+## 3. Consent for a dependency's plugin (AT-DISCOVERY, AT-APPROVAL)
 
-**Status**: works. Checked while preparing this: the CLI and the Codex listing. The Claude TUI step was not run.
+### 3a. SessionStart context
 
-## 3. A dependency's own plugin needs consent
-
-**Journey**: Discover capabilities while coding, Approve plugins (AT-DISCOVERY, AT-APPROVAL).
-
-**Why it matters**: depending on a crate means compiling its code, not letting its author inject agent context. A dependency's plugin stays off until the user says yes, and the agent is told so it can ask.
-
-### 3a. What the agent hears when a session starts
-
-This is the JSON Claude Code sends at session start, piped by hand:
+A hook never prompts. The pending plugin reaches the agent as context instead:
 
 ```bash
 printf '{"session_id":"demo","cwd":"%s","hook_event_name":"SessionStart","source":"startup"}' "$PWD" \
   | symposium hook claude session-start | python3 -m json.tool
 ```
-
-**Expected**:
 
 ```json
 {
@@ -207,17 +320,9 @@ printf '{"session_id":"demo","cwd":"%s","hook_event_name":"SessionStart","source
 }
 ```
 
-**In the agent**: start `claude` in demo-app and ask "is there anything I should set up for this project?". It should name `acme-retry` and point you at `symposium sync`.
+### 3b. Enable at the prompt
 
-### 3b. Say yes
-
-```bash
-symposium sync
-```
-
-Pick "Enable" (arrow down, then Enter).
-
-**Expected**:
+Run `symposium sync` again and pick "Enable":
 
 ```text
 Dependency `acme-retry` provides 1 skill group. Enable it?:
@@ -225,31 +330,21 @@ Dependency `acme-retry` provides 1 skill group. Enable it?:
   Enable
   No — don't ask again
 ...
-Dependency `acme-retry` provides 1 skill group. Enable it?: Enable
 ℹ️  enabled dependency plugins: acme-retry
-ℹ️  scanning 2 workspace dependencies
 installed plugin acme-retry for claude -> <DEMO>/work/demo-app/.claude/skills/acme-retry
 ✅ installed skill retry-policies for codex → <DEMO>/work/demo-app/.agents/skills/retry-policies
 ```
 
-```bash
-symposium status | tail -1
-grep -A1 '^\[plugins\]' ~/.symposium/config.toml
-```
+Each answer is written to the global `[plugins]` table in `~/.symposium/config.toml`:
+- "Enable" goes to `auto-enable = ["acme-retry"]`, which `status` shows as `` `[plugins] auto-enable` ``.
+- "No" goes to `disable`.
+- "Ask me later" writes nothing.
 
-```text
-✅ acme-retry 0.3.1 — `[plugins] auto-enable`
-[plugins]
-auto-enable = ["acme-retry"]
-```
+In 0.7.0 no command undoes either answer; [#535](https://github.com/symposium-dev/symposium/issues/535) makes `use --remove` do it.
 
-Look for: the answer is recorded in the user config. "Ask me later", the default, records nothing, so pressing Enter never declines anything. "No" goes to `[plugins] disable`.
+### 3c. A dependency added mid-session
 
-### 3c. A dependency added in the middle of a session
-
-In a Claude session in demo-app, ask: "add acme-metrics as a path dependency from ../acme-metrics". After the agent runs `cargo add`, Symposium sees `Cargo.lock` change, re-syncs, and tells the agent, once.
-
-Or by hand:
+In a Claude session, ask it to add `acme-metrics` as a path dependency. You can also replay what the agent would do:
 
 ```bash
 cargo add acme-metrics --path ../acme-metrics
@@ -258,7 +353,7 @@ echo "$P" | symposium hook claude post-tool-use | python3 -m json.tool
 echo "$P" | symposium hook claude post-tool-use; echo
 ```
 
-**Expected**: the first call names the new plugin,
+The `Cargo.lock` change triggers a re-sync. The first call names the new plugin, and the second prints `{}`, because each package and version is surfaced once:
 
 ```json
 {
@@ -269,54 +364,26 @@ echo "$P" | symposium hook claude post-tool-use; echo
 }
 ```
 
-and the second prints `{}`: each new plugin is named once. If the agent already got the notice, the first call prints `{}` too.
-
-### 3d. Enable by name
+### 3d. `use`
 
 ```bash
 symposium use acme-metrics
 symposium status | tail -2
 ```
 
-**Expected**:
-
 ```text
 ✅ enabled acme-metrics for this workspace
-ℹ️  scanning 3 workspace dependencies
 installed plugin acme-metrics for claude -> <DEMO>/work/demo-app/.claude/skills/acme-metrics
 ✅ installed skill metric-naming for codex → <DEMO>/work/demo-app/.agents/skills/metric-naming
 ✅ acme-metrics 1.2.0 — `[plugins] use`
 ✅ acme-retry 0.3.1 — `[plugins] auto-enable`
 ```
 
-**In the agent**: a running Claude session needs `/reload-plugins` to see `acme-metrics`.
+A running Claude session needs `/reload-plugins` to see it. A `use` run from another terminal does not reach that session at all.
 
-**Status**: works. Gap: a `symposium use` run from another terminal does not tell the running session to reload.
+## 4. Team hook and team subcommand (AT-TEAM, AT-HOOK)
 
-## 4. Team rules in the repository: one hook for every agent, and a team command
-
-**Journey**: Get the team setup, Publish portable hooks (AT-TEAM, AT-HOOK).
-
-**Why it matters**: a repository carries its conventions in its own `Symposium.toml`, written once in Symposium's hook format and enforced on every agent. The workspace is a trust root, so nobody is asked for consent.
-
-The fixture `demo-app/Symposium.toml`:
-
-```toml
-[[hooks]]
-name = "no-publish"
-event = "PreToolUse"
-matcher = "^(Bash|bash|run_command|execute_bash)$"
-command = { script = "scripts/no-publish.sh" }
-
-[subcommand.demo-check]
-description = "Run the demo-app team checks (fmt, tests)"
-audience = "agents"
-command = { script = "scripts/demo-check.sh" }
-```
-
-`scripts/no-publish.sh` exits 2 with a reason when the command contains `cargo publish` without `--dry-run`.
-
-### 4a. The hook, as three agents see it
+`demo-app/Symposium.toml` holds `no-publish`, a symposium-format `PreToolUse` hook whose script exits 2 on `cargo publish` without `--dry-run`, and `demo-check`, an agent-audience subcommand. The workspace is a trust root, so nothing asks for consent.
 
 ```bash
 printf '{"session_id":"demo","cwd":"%s","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cargo publish"}}' "$PWD" | symposium hook claude pre-tool-use; echo
@@ -325,7 +392,7 @@ printf '{"session_id":"demo","turn_id":"t1","cwd":"%s","hook_event_name":"PreToo
 printf '{"timestamp":1,"cwd":"%s","toolName":"bash","toolArgs":"{\\"command\\":\\"cargo publish\\"}"}' "$PWD" | symposium hook copilot pre-tool-use; echo
 ```
 
-**Expected** (Claude, Claude with `--dry-run`, Codex, Copilot):
+The four outputs are, in order: Claude, Claude with `--dry-run`, Codex, Copilot.
 
 ```text
 {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"demo-app team rule: never run cargo publish from an agent session; use cargo publish --dry-run"}}
@@ -334,18 +401,12 @@ printf '{"timestamp":1,"cwd":"%s","toolName":"bash","toolArgs":"{\\"command\\":\
 {"permissionDecision":"deny","permissionDecisionReason":"demo-app team rule: never run cargo publish from an agent session; use cargo publish --dry-run"}
 ```
 
-Look for: one shell script. Symposium hands it each agent's event in one canonical shape and returns the decision in each agent's own shape.
-
-**In the agent**: ask Claude "publish this crate to crates.io". The Bash call is denied and Claude reports the team rule. Codex does the same; the first time it starts, it asks you to review the hooks, so trust them.
-
-### 4b. The team command
+The script receives one canonical event, and each agent gets the decision in its own wire format. On first start, Codex asks you to review the hooks.
 
 ```bash
 symposium --help
 symposium demo-check
 ```
-
-**Expected** (`--help`, trimmed):
 
 ```text
 Commands for humans:
@@ -358,42 +419,20 @@ crate-info   Find crate sources
 demo-check   Run the demo-app team checks (fmt, tests)
 ```
 
-and `demo-check` runs the script: `demo-check: cargo fmt --check`, the test run, then `demo-check: all good`.
+`demo-check` exists only inside the workspace; compare `symposium --help` run from `~`. Portable hook binaries (`hook::hook_main`) are still a draft, [#486](https://github.com/symposium-dev/symposium/issues/486).
 
-Look for: help splits commands for humans and for agents. `demo-check` comes from the repository and exists only inside it: compare with `symposium --help` run from `~`. The session-start context in 3a already tells the agent to run `symposium --help`.
-
-**Status**: works. Portable hook binaries (`hook::hook_main`) are a draft, #486.
-
-## 5. Writing and trying a plugin
-
-**Journey**: plugin authoring.
-
-**Why it matters**: a plugin author can start from the Agent Plugins format or from an existing Claude Code plugin, see what will not port, and use the plugin in real agents before publishing it.
-
-### 5a. Validate an Agent Plugins package
+## 5. Plugin authoring
 
 ```bash
 cd "$DEMO/work/plugins"
 symposium plugin validate rust-review
-```
-
-**Expected**:
-
-```text
-  ⚠️  rust-review (agent plugin): plugin `rust-review` references no dependency; it stays dormant until enabled with `symposium use rust-review`
-  ✅ review-unsafe (skill)
-```
-
-### 5b. Import a Claude Code plugin
-
-```bash
 symposium plugin import claude-changelog --out imported
 find imported -type f | sort
 ```
 
-**Expected**:
-
 ```text
+  ⚠️  rust-review (agent plugin): plugin `rust-review` references no dependency; it stays dormant until enabled with `symposium use rust-review`
+  ✅ review-unsafe (skill)
 ⚠️  name `Claude-Changelog` normalized to `claude-changelog`
 Imported claude-changelog into imported/claude-changelog
   ⚠️  claude-changelog (plugin): plugin `claude-changelog` references no dependency; it stays dormant until enabled with `symposium use claude-changelog`
@@ -404,115 +443,68 @@ imported/claude-changelog/plugin.json
 imported/claude-changelog/skills/changelog/SKILL.md
 ```
 
-Look for: the command became a skill, the hook kept Claude's format (it runs only in Claude Code, with `CLAUDE_PLUGIN_ROOT` set), and validation says exactly what will not port.
-
-### 5c. Try a plugin in your agents
+In the import:
+- The command became a skill.
+- The hook kept Claude's format, so it runs only on Claude Code, with `CLAUDE_PLUGIN_ROOT` set.
+- `validate` names what does not port.
 
 ```bash
 cd "$DEMO/work/demo-app"
 symposium plugin try ../plugins/rust-review
 ```
 
-**Expected**:
-
 ```text
 trying rust-review in every workspace; edits reach your agents on the next sync
-ℹ️  scanning 3 workspace dependencies
 installed plugin rust-review for claude -> ~/.claude/skills/rust-review
 installed plugin rust-review for codex -> ~/.codex/plugins/cache/symposium/rust-review
 ℹ️  Claude Code has no listing command; start a new session here and run `/skills`
 ℹ️  Codex CLI lists review-unsafe
 ```
 
-Look for: `try` links your folder, so an edit reaches the agents on the next sync, and it asks each agent what it actually loaded.
+`try` links the folder into the `user-plugins` registry. Because the plugin is dormant, `try` also records a global `use` entry. It then asks each agent what it actually loaded. Undo it with `symposium plugin try --remove rust-review`.
 
-**In the agent**: a new Claude session lists `review-unsafe` under `/skills`.
-
-**Reset**:
-
-```bash
-symposium plugin try --remove rust-review
-```
-
-```text
-stopped trying rust-review
-ℹ️  scanning 3 workspace dependencies
-➖ removed ~/.symposium/installed/rust-review
-➖ removed ~/.claude/skills/rust-review
-➖ removed ~/.codex/plugins/cache/symposium/rust-review
-```
-
-**Status**: works.
-
-## 6. A ready-made setup for every workspace (do this one last)
-
-**Journey**: Install a ready-made setup (AT-INSTALL, AT-INSTALL-04 is #451).
-
-**Why it matters**: one command installs a curated package, here `just-right-rust`, for the user in every agent that keeps plugins at user level, instead of per project.
-
-**Steps**:
+## 6. `use --global` (AT-INSTALL, AT-INSTALL-04 is [#451](https://github.com/symposium-dev/symposium/issues/451))
 
 ```bash
 cd ~
 symposium use just-right-rust --global
-```
-
-**Expected** (about 10 seconds):
-
-```text
-✅ enabled just-right-rust for every workspace
-installed plugin just-right-rust for claude -> ~/.claude/skills/just-right-rust
-installed plugin just-right-rust for codex -> ~/.codex/plugins/cache/symposium/just-right-rust
-```
-
-```bash
 ls ~/.claude/skills/just-right-rust/skills
 grep -A1 just-right ~/.codex/config.toml
 ```
 
 ```text
+✅ enabled just-right-rust for every workspace
+installed plugin just-right-rust for claude -> ~/.claude/skills/just-right-rust
+installed plugin just-right-rust for codex -> ~/.codex/plugins/cache/symposium/just-right-rust
 async-rust
 unsafe-rust-review
 [plugins."just-right-rust@symposium"]
 enabled = true
 ```
 
-**In the agent**: a new session in any folder lists both skills. For Codex without a model call, `codex debug prompt-input hi | grep -o 'just-right-rust:[a-z-]*'` prints `just-right-rust:async-rust` and `just-right-rust:unsafe-rust-review`.
-
-**Status**: the install works; living with it does not yet. just-right-rust 0.1.1 declares hooks whose helper binary Symposium tries to `cargo install` inside each hook event. The install never finishes within the 8 second hook budget, so **every hook event in a Rust workspace waits 8 to 9 seconds**, and each one leaves a `cargo-install*` folder of about 200 MB in `$TMPDIR`. To see it:
+The install works, but living with it does not yet. just-right-rust 0.1.1 declares hooks whose helper binary symposium `cargo install`s inside each hook event. That never finishes within the 8 s hook budget. As a result, every hook event in a Rust workspace waits 8 to 9 s and leaves a ~200 MB `cargo-install*` folder in `$TMPDIR`.
 
 ```bash
 cd "$DEMO/work/demo-app"
 time (printf '{"session_id":"demo","cwd":"%s","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"}}' "$PWD" | symposium hook claude pre-tool-use)
 ```
 
-It prints `{}` after about 9 seconds (instantly without the plugin). Two fixes are waiting: symposium #512 installs hook helpers at `use` and `sync` instead of per event, and just-right-rust 0.1.2 drops the no-op hooks (symposium-dev/just-right-rust#2, which needs a crates.io publish by an owner).
+Two fixes are pending:
+- [#512](https://github.com/symposium-dev/symposium/issues/512) installs hook helpers at `use` and `sync` instead of per event. With it, the install takes 35 s once and hooks then answer in 0.08 to 0.3 s.
+- just-right-rust 0.1.2 drops the no-op hooks ([symposium-dev/just-right-rust#2](https://github.com/symposium-dev/just-right-rust/issues/2)). It is unpublished, and you are the only crates.io owner.
 
-**Reset** (before going back to any other topic):
+Undo it before any other topic. Then, if no other `cargo install` is running, delete the leftovers.
 
 ```bash
 symposium use just-right-rust --global --remove
+rm -rf "${TMPDIR:-/tmp}"/cargo-install*
 ```
 
-```text
-➖ removed the just-right-rust enablement for every workspace
-ℹ️  scanning 3 workspace dependencies
-➖ removed ~/.symposium/installed/just-right-rust
-➖ removed ~/.claude/skills/just-right-rust
-➖ removed ~/.codex/plugins/cache/symposium/just-right-rust
-```
+## Bonus
 
-Then, if no other `cargo install` is running, delete the leftovers: `rm -rf "${TMPDIR:-/tmp}"/cargo-install*`.
+### B1. Out-of-process package manager (AT-ECOSYSTEM)
 
-**Open question**: a global package ignores predicates today (every condition counts as met, so it serves every workspace). On 2026-11-03 you answered that predicates should still filter (AT-INSTALL-04). Which way do we go? just-right-rust uses `depends-on = ["*"]`, so this demo cannot show the difference.
-
-## Bonus B1. Package managers out of process
-
-**Journey**: Ecosystems (AT-ECOSYSTEM).
-
-**Why it matters**: the cargo package manager is its own binary speaking JSON-RPC over stdio. Another ecosystem plugs in the same way, through a `[[package-manager]]` entry.
-
-**Steps**: append this to `~/.symposium/config.toml`. The wrapper logs each spawn, then runs the real binary:
+A `[[package-manager]]` named `cargo` replaces the in-process cargo PM. Append it to `~/.symposium/config.toml` only once: a second copy makes the config invalid, and symposium then falls back to its defaults. The wrapper below logs every spawn.
 
 ```toml
 [[package-manager]]
@@ -527,8 +519,6 @@ symposium status | tail -3
 cat ~/pm-spawns.log
 ```
 
-**Expected**: the same status lines as before, and one `spawned symposium-pm-cargo` line per command:
-
 ```text
 ✅ demo-app — workspace member
 ✅ acme-metrics 1.2.0 — `[plugins] use`
@@ -536,19 +526,9 @@ cat ~/pm-spawns.log
 11:07:29 spawned symposium-pm-cargo
 ```
 
-Look for: an entry named `cargo` replaces the built-in, in-process cargo package manager; any other name adds an ecosystem.
+The status output is the same as with the in-process PM, and the log shows one spawn per command. With `use` or `auto-enable` packages, a hook event spawns the PM too. There is no second real ecosystem yet.
 
-**Reset**: delete the block from `~/.symposium/config.toml`.
-
-**Status**: works. There is no second real ecosystem yet.
-
-## Bonus B2. Audits
-
-**Journey**: Approve plugins, Policy (AT-APPROVAL, AT-POLICY).
-
-**Why it matters**: a community list records which dependency plugin payloads were reviewed and which releases are revoked. A revoked release never loads, and the consent prompt and `status` show the list's verdict.
-
-**What works today**: the payload digest an audit entry is keyed on.
+### B2. Audits (AT-APPROVAL, AT-POLICY)
 
 ```bash
 symposium plugin digest ../acme-retry
@@ -558,54 +538,47 @@ symposium plugin digest ../acme-retry
 sha256:e98011210ebf04e22fe2cc2b0a6ebbc31163c1c2337b0e796745496a6a697af6
 ```
 
-**What cannot be shown yet**: the list, `symposium-dev/audits`, is a private repository with no entries. With `[defaults] symposium-audits = true` the fetch fails, so the prompt and `status` show no verdict at all, and `symposium plugin sync symposium-audits` prints `No git source found for provider: symposium-audits` (the failed fetch only reaches the log).
+Nothing beyond the digest can be shown. `symposium-dev/audits` is private and has no entries, so with `[defaults] symposium-audits = true` the fetch fails and no verdict appears anywhere. In 0.7.0, `plugin sync symposium-audits` reports that as `No git source found for provider` and exits 0; [#533](https://github.com/symposium-dev/symposium/issues/533) reports the fetch error instead.
 
-**Open question**: when does the list go public, and who curates its first entries?
+### B3. Agent evaluations (AT-EVAL)
 
-## Bonus B3. Agent evaluations
+From a symposium checkout, `cargo xtask agent-eval --check-tasks` prints `ok formatting`, `ok store-durability` and `checked 2 tasks`. Real trials run under `srt` and need Linux, so none were run for this.
 
-**Journey**: Evaluate (AT-EVAL).
+## Bugs this pass found, with fixes open
 
-**Why it matters**: it measures whether Symposium helps: a real agent works on a small Rust task with and without Symposium, the result is graded, and what Symposium did along the way is checked.
+All of them reproduce on main:
+- [#532](https://github.com/symposium-dev/symposium/issues/532): switching `hook-scope` left the old scope registered.
+  - The old scope's hooks stayed, so Codex and Copilot ran every hook twice; Claude Code dedups identical commands.
+  - After a switch from global to project, the user-level MCP entries stayed, so the servers kept running in every project.
+- [#533](https://github.com/symposium-dev/symposium/issues/533): output fixes.
+  - `-q` did not silence report output.
+  - `plugin sync` hid failed fetches and exited 0.
+  - The unavailable-PM error repeated itself.
+  - Plugin install lines did not match skill install lines.
+  - `plugin validate` on a crate listed each skill twice and dropped `source.git` groups.
+- [#534](https://github.com/symposium-dev/symposium/issues/534): Codex 0.159.3 only watches skill roots that exist at session start, so skills copied into a new `.agents/skills/` mid-session never load. Codex now gets a "start a new session" notice.
+- [#535](https://github.com/symposium-dev/symposium/issues/535): `use X --remove` now also clears X from `auto-enable` and `disable`, the only way to undo a consent answer without editing the config.
 
-**Steps**, from a symposium checkout:
+## Open gaps
 
-```bash
-cargo xtask agent-eval --check-tasks
-```
+1. A global just-right-rust stalls every hook (topic 6); fixed by #512 plus a 0.1.2 publish.
+2. Global packages ignore predicates: every condition counts as met (topic 6).
+3. `use` from another terminal does not tell a running session to reload (topic 3).
+4. The audits list is private and empty (B2).
+5. Eval trials are Linux only (B3).
+6. Telemetry asks for consent but records nothing.
 
-**Expected**:
+## Questions
 
-```text
-ok    formatting
-ok    store-durability
-checked 2 tasks
-```
+1. Should global packages still filter by predicates per workspace? You said yes on 2026-11-03 (AT-INSTALL-04). This demo cannot show it, because just-right-rust uses `depends-on = ["*"]`.
+2. Can you publish just-right-rust 0.1.2, or add another crates.io owner?
+3. When does the audits list go public, and who curates its first entries?
+4. Is this the delivery you want: project plugins for Claude Code, per-skill copies for Codex, and user-level plugins for `--global` and `try`?
 
-A real batch is `cargo xtask agent-eval formatting --client claude --model <model>`. It needs Linux (trials run under `srt`) and a Claude credential, and it keeps results under `results/`. It was not run while preparing this.
+## Reset
 
-## Known gaps, in one place
-
-1. A global just-right-rust makes every hook event wait 8 to 9 seconds and leaves about 200 MB in `$TMPDIR` per event (topic 6). Fixes: symposium #512, just-right-rust 0.1.2.
-2. Global packages ignore predicates (topic 6).
-3. `symposium use` from another terminal does not tell a running session to reload (topic 3).
-4. The audits list is private and empty, and `plugin sync symposium-audits` reports its failed fetch as a missing source (B2).
-5. Agent evaluation trials run on Linux only (B3).
-6. Telemetry asks for consent and has its storage, but records nothing yet.
-
-## Questions for you
-
-1. Global packages and predicates: filter per workspace or not (topic 6)?
-2. Can you publish just-right-rust 0.1.2, or add another owner on crates.io? You are its only owner.
-3. When does the audits list go public, and who curates it (B2)?
-4. Does the delivery you saw in topics 2 and 5 (one plugin per project for Claude Code, per-skill copies for Codex, user-level plugins for `--global` and `try`) match where you want plugins to go?
-
-## Reset everything
-
-If you logged Claude Code in inside the sandbox, run `claude auth logout` in the demo shell first, since the login may live in your keychain. Then:
+If you logged Claude in inside the sandbox, run `claude auth logout` there first: the login may live in your keychain. Then remove the sandbox, which holds everything the demo wrote:
 
 ```bash
-./reset.sh
+rm -rf "${DEMO:?}"
 ```
-
-It deletes `~/symposium-demo`: the sandbox home, the demo binaries and the work copies. Nothing outside it was written.

@@ -33,222 +33,19 @@ cargo binstall symposium --version 0.7.0 --root "$DEMO" -y
 
 ### Fixtures
 
+The fixtures live in `demo-niko/fixtures/` on this branch. Clone the branch into the sandbox and copy them into `$DEMO/work`. The clone also serves as the symposium checkout for B3.
+
+```bash
+git clone -q -b demo-niko https://github.com/fnzko/symposium "$DEMO/src"
+mkdir -p "$DEMO/work" && cp -R "$DEMO/src/demo-niko/fixtures/." "$DEMO/work/"
+```
+
 | Fixture | |
 |---|---|
 | `demo-app` | Bin crate depending on `anyhow` and on the path dependency `acme-retry`. Its `Symposium.toml` declares a team hook and a team subcommand. |
 | `acme-retry`, `acme-metrics` | Path dependencies that ship a `skills/` folder and no manifest. |
 | `plugins/rust-review` | Agent Plugins package. |
 | `plugins/claude-changelog` | Claude Code plugin with one command and one `Stop` hook. |
-
-Create these files under `$DEMO/work`, which is `symposium-demo/work` in your real home.
-
-`demo-app/Cargo.toml`:
-
-```toml
-[package]
-name = "demo-app"
-version = "0.1.0"
-edition = "2021"
-publish = false
-
-[dependencies]
-anyhow = "1"
-acme-retry = { path = "../acme-retry" }
-
-[workspace]
-```
-
-`demo-app/src/main.rs`:
-
-```rust
-use anyhow::Result;
-
-fn main() -> Result<()> {
-    let attempts = acme_retry::with_retries(3, || Ok::<_, anyhow::Error>(42))?;
-    println!("answer: {attempts}");
-    Ok(())
-}
-```
-
-`demo-app/Symposium.toml`:
-
-```toml
-[[hooks]]
-name = "no-publish"
-event = "PreToolUse"
-matcher = "^(Bash|bash|run_command|execute_bash)$"
-command = { script = "scripts/no-publish.sh" }
-
-[subcommand.demo-check]
-description = "Run the demo-app team checks (fmt, tests)"
-audience = "agents"
-command = { script = "scripts/demo-check.sh" }
-```
-
-`demo-app/scripts/no-publish.sh`:
-
-```sh
-#!/bin/sh
-input=$(cat)
-if printf '%s' "$input" | grep -q 'cargo publish' && ! printf '%s' "$input" | grep -q -- '--dry-run'; then
-  echo "demo-app team rule: never run cargo publish from an agent session; use cargo publish --dry-run" >&2
-  exit 2
-fi
-exit 0
-```
-
-`demo-app/scripts/demo-check.sh`:
-
-```sh
-#!/bin/sh
-set -e
-echo "demo-check: cargo fmt --check"
-cargo fmt --check
-echo "demo-check: cargo test"
-cargo test --quiet
-echo "demo-check: all good"
-```
-
-`acme-retry/Cargo.toml`:
-
-```toml
-[package]
-name = "acme-retry"
-version = "0.3.1"
-edition = "2021"
-publish = false
-```
-
-`acme-retry/src/lib.rs`:
-
-```rust
-pub fn with_retries<T, E>(attempts: u32, mut op: impl FnMut() -> Result<T, E>) -> Result<T, E> {
-    let mut last = op();
-    for _ in 1..attempts {
-        if last.is_ok() {
-            break;
-        }
-        last = op();
-    }
-    last
-}
-```
-
-`acme-retry/skills/retry-policies/SKILL.md`:
-
-```markdown
----
-name: retry-policies
-description: How to retry fallible operations with acme-retry. Use when adding retries, backoff, or idempotency checks around network or IO calls.
----
-
-# Retrying with acme-retry
-
-- Wrap the fallible call in `acme_retry::with_retries(n, || ...)`.
-- Only retry idempotent operations.
-- Keep `n` small (3 is the team default) and log the final error with `anyhow::Context`.
-```
-
-`acme-metrics/Cargo.toml`:
-
-```toml
-[package]
-name = "acme-metrics"
-version = "1.2.0"
-edition = "2021"
-publish = false
-```
-
-`acme-metrics/src/lib.rs`:
-
-```rust
-pub fn counter(name: &str) -> String {
-    format!("acme.{name}")
-}
-```
-
-`acme-metrics/skills/metric-naming/SKILL.md`:
-
-```markdown
----
-name: metric-naming
-description: Naming rules for acme-metrics counters and gauges. Use when adding or renaming a metric.
----
-
-# Metric naming
-
-- Names are `snake_case`, prefixed by the subsystem: `http_requests_total`.
-- Counters end in `_total`; durations end in `_seconds`.
-```
-
-`plugins/rust-review/plugin.json`:
-
-```json
-{
-  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  "name": "rust-review",
-  "version": "0.1.0",
-  "description": "Review checklist for unsafe Rust",
-  "license": "MIT"
-}
-```
-
-`plugins/rust-review/skills/review-unsafe/SKILL.md`:
-
-```markdown
----
-name: review-unsafe
-description: Checklist for reviewing unsafe Rust blocks. Use when the user asks to review code that contains `unsafe`.
----
-
-# Reviewing unsafe Rust
-
-1. Every `unsafe` block has a `// SAFETY:` comment naming the invariant it relies on.
-2. The invariant is upheld by every caller, not just the current one.
-3. Prefer a safe abstraction with a small unsafe core over many scattered blocks.
-```
-
-`plugins/claude-changelog/.claude-plugin/plugin.json`:
-
-```json
-{
-  "name": "Claude-Changelog",
-  "version": "1.0.0",
-  "description": "Keep CHANGELOG.md up to date"
-}
-```
-
-`plugins/claude-changelog/commands/changelog.md`:
-
-```markdown
----
-description: Add an entry to CHANGELOG.md for the change just made
----
-
-Read the staged diff, then add one line under `## [Unreleased]` in CHANGELOG.md describing the user-visible change.
-```
-
-`plugins/claude-changelog/hooks/hooks.json`:
-
-```json
-{
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          { "type": "command", "command": "echo 'Remember: CHANGELOG.md' >&2" }
-        ]
-      }
-    ]
-  }
-}
-```
-
-Then make the two team scripts executable:
-
-```bash
-chmod +x "$DEMO/work/demo-app/scripts/"*.sh
-```
 
 ## 1. `init` (Set up Symposium, AT-SETUP-01, [#424](https://github.com/symposium-dev/symposium/issues/424))
 
@@ -521,7 +318,7 @@ Nothing beyond the digest can be shown. `symposium-dev/audits` is private and ha
 
 ### B3. Agent evaluations (AT-EVAL)
 
-From a symposium checkout, `cargo xtask agent-eval --check-tasks` prints `ok formatting`, `ok store-durability` and `checked 2 tasks`. Real trials run under `srt` and need Linux, so none were run for this.
+From the symposium checkout in `$DEMO/src`, `cargo xtask agent-eval --check-tasks` prints `ok formatting`, `ok store-durability` and `checked 2 tasks`. Real trials run under `srt` and need Linux, so none were run for this.
 
 ## 6. just-right-rust for every workspace (AT-INSTALL, AT-INSTALL-04 is [#451](https://github.com/symposium-dev/symposium/issues/451))
 

@@ -436,18 +436,11 @@ All of them reproduce on main:
 ## Open gaps
 
 1. just-right-rust 0.1.1 from crates.io stalls every hook (topic 6). Publishing `main` fixes it, and so does #512 on the symposium side.
-2. Global packages ignore predicates: every condition counts as met (topic 6).
+2. Global packages ignore predicates: every condition counts as met (topic 6). just-right-rust uses `depends-on = ["*"]`, so this demo cannot show the difference.
 3. `use` from another terminal does not tell a running session to reload (topic 3).
 4. The audits list is private and empty (B2).
 5. Eval trials are Linux only (B3).
 6. Telemetry asks for consent but records nothing.
-
-## Questions
-
-1. Should global packages still filter by predicates per workspace? You said yes on 2026-11-03 (AT-INSTALL-04). This demo cannot show it, because just-right-rust uses `depends-on = ["*"]`. Its `main` keeps a commented-out `shell(...)` predicate for Rust files that waits on this answer.
-2. Can you publish just-right-rust `main` as 0.1.2 (with a `version` in `Symposium.toml`), or add another crates.io owner?
-3. When does the audits list go public, and who curates its first entries?
-4. Is this the delivery you want: project plugins for Claude Code, per-skill copies for Codex, and user-level plugins for `--global` and `try`?
 
 ## Reset
 
